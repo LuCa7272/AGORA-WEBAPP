@@ -1,0 +1,32 @@
+{
+  "PASTA001": {
+    "product_details": {
+      "id": "PASTA001",
+      "nome": "Spaghetti Barilla n.5",
+      "marca": "Barilla",
+      "categoria": "Pasta",
+      "prezzo": 1.20,
+      "disponibile": true
+    }
+  },
+  "LATTE001": {
+    "product_details": {
+      "id": "LATTE001", 
+      "nome": "Latte Intero Centrale",
+      "marca": "Centrale del Latte",
+      "categoria": "Latticini",
+      "prezzo": 1.35,
+      "disponibile": true
+    }
+  },
+  "PANE001": {
+    "product_details": {
+      "id": "PANE001",
+      "nome": "Panini per Hamburger",
+      "marca": "Mulino Bianco",
+      "categoria": "Panificati",
+      "prezzo": 2.50,
+      "disponibile": true
+    }
+  }
+}

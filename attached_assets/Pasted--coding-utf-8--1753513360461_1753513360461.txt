@@ -1,0 +1,192 @@
+# -*- coding: utf-8 -*-
+
+# ==================================================================================================
+# FILE 31: VERSIONE DEFINITIVA CON ANALISI STRUTTURATA DELLA QUERY
+# ==================================================================================================
+# OBIETTIVO:
+# - FASE 1: L'AI analizza la richiesta e la destruttura in "soggetto" e "modificatori".
+# - FASE 2: La ricerca vettoriale trova candidati semanticamente simili.
+# - FASE 3: L'AI usa la struttura della query (soggetto/modificatori) per un
+#   re-ranking rigoroso, prima filtrando per soggetto e poi ordinando per modificatori.
+# ==================================================================================================
+
+import os
+import json
+import faiss
+import numpy as np
+import google.generativeai as genai
+from sentence_transformers import SentenceTransformer
+
+# --- 1. DEFINIZIONE DEI PERCORSI E DELLE COSTANTI ---
+FILE_API_KEY = "gemini_api_key.txt"
+FILE_CACHE_PRODOTTI = "cache_prodotti_gemini.json"
+FILE_INDICE_VETTORIALE = "prodotti.index"
+FILE_MAPPA_INDICE_PRODOTTI = "indice_mappa.json"
+MODELLO_EMBEDDING = 'all-MiniLM-L6-v2'
+MODELLO_AI = "gemini-2.5-flash-lite"
+CANDIDATI_DA_RICERCA_VETTORIALE = 50
+NUMERO_RISULTATI_FINALI = 5
+
+# --- 2. FUNZIONI DI UTILITÀ ---
+def carica_api_key():
+    if not os.path.exists(FILE_API_KEY):
+        print(f"ERRORE: File della chiave API '{FILE_API_KEY}' non trovato.")
+        return None
+    with open(FILE_API_KEY, 'r', encoding='utf-8') as f:
+        return f.read().strip()
+
+# --- 3. CLASSE PRINCIPALE DELL'ASSISTENTE ---
+class FinalAssistant:
+    def __init__(self):
+        print("Inizializzazione dell'Assistente alla Spesa...")
+        api_key = carica_api_key()
+        if not api_key: exit()
+        genai.configure(api_key=api_key)
+        self.model = genai.GenerativeModel(MODELLO_AI)
+
+        print(f"Caricamento del modello di embedding: '{MODELLO_EMBEDDING}'...")
+        self.embedding_model = SentenceTransformer(MODELLO_EMBEDDING)
+        
+        self._carica_dati_ricerca()
+        print("Assistente pronto.")
+
+    def _carica_dati_ricerca(self):
+        print("Caricamento dei dati di ricerca...")
+        try:
+            self.index = faiss.read_index(FILE_INDICE_VETTORIALE)
+            with open(FILE_MAPPA_INDICE_PRODOTTI, 'r', encoding='utf-8') as f:
+                mappa_indice = json.load(f)
+                self.mappa_id_prodotto = {v: k for k, v in mappa_indice.items()}
+            with open(FILE_CACHE_PRODOTTI, 'r', encoding='utf-8') as f:
+                self.cache_prodotti = json.load(f)
+        except FileNotFoundError as e:
+            print(f"ERRORE: File di dati '{e.filename}' non trovato.")
+            exit()
+
+    def _fase1_analizza_query(self, richiesta_utente):
+        """FASE 1: Usa l'AI per destrutturare la query in soggetto e modificatori."""
+        print("\nFASE 1: Analisi strutturata della query...")
+        
+        prompt = f"""Analizza la richiesta di un utente per un prodotto da supermercato. Il tuo compito è destrutturarla, identificando il Soggetto Principale e i Modificatori Chiave.
+
+**Soggetto Principale**: È la cosa che l'utente vuole comprare (es. panino, biscotto, caffè).
+**Modificatori Chiave**: Sono le parole che descrivono il soggetto (es. hamburger, cioccolato, arabica).
+
+RICHIESTA UTENTE: "{richiesta_utente}"
+
+Restituisci un singolo oggetto JSON con due chiavi:
+1.  "soggetto": la parola singolare che rappresenta il prodotto principale.
+2.  "modificatori": una lista di parole che descrivono le caratteristiche.
+
+Esempi:
+- Richiesta: "panini per hamburger" -> {{"soggetto": "panino", "modificatori": ["hamburger"]}}
+- Richiesta: "biscotti carrefour integrali" -> {{"soggetto": "biscotto", "modificatori": ["carrefour", "integrale"]}}
+- Richiesta: "novellini" -> {{"soggetto": "novellino", "modificatori": []}}
+"""
+        try:
+            generation_config = genai.types.GenerationConfig(response_mime_type="application/json")
+            response = self.model.generate_content(prompt, generation_config=generation_config)
+            risultato = json.loads(response.text)
+            print(f"-> Analisi Query: Soggetto='{risultato.get('soggetto')}', Modificatori={risultato.get('modificatori')}")
+            return risultato
+        except Exception as e:
+            print(f"ERRORE durante la Fase 1: {e}")
+            return None
+
+    def _fase2_ricerca_vettoriale(self, richiesta_utente):
+        """FASE 2: Esegue una ricerca vettoriale con la query originale."""
+        print("\nFASE 2: Esecuzione della ricerca vettoriale...")
+        query_embedding = self.embedding_model.encode([richiesta_utente])
+        _, indici = self.index.search(np.array(query_embedding), CANDIDATI_DA_RICERCA_VETTORIALE)
+        ids_candidati = [self.mappa_id_prodotto.get(i) for i in indici[0] if i != -1]
+        candidati = [self.cache_prodotti.get(pid) for pid in ids_candidati if pid in self.cache_prodotti]
+        print(f"-> Trovati {len(candidati)} candidati semanticamente simili.")
+        return candidati
+
+    def _fase3_reranking_strutturato(self, query_strutturata, prodotti_candidati):
+        """FASE 3: Usa la query strutturata per un re-ranking rigoroso."""
+        if not prodotti_candidati: return []
+        
+        print("\n-----------------------------------------------------")
+        print("DEBUG: PRODOTTI INVIATI ALL'AI PER IL RE-RANKING FINALE")
+        print("-----------------------------------------------------")
+        for p_data in prodotti_candidati:
+            details = p_data.get('product_details', {})
+            print(f"- {details.get('nome', 'N/A')} (ID: {details.get('id', 'N/A')})")
+        print("-----------------------------------------------------")
+
+        print("\nFASE 3: Re-ranking con logica strutturata...")
+        dettagli_semplificati = [
+            {"id": p.get('product_details', {}).get('id'), "nome": p.get('product_details', {}).get('nome')}
+            for p in prodotti_candidati
+        ]
+
+        prompt = f"""Sei un assistente alla spesa esperto. Il tuo compito è analizzare una lista di prodotti e selezionare i più pertinenti seguendo un processo logico.
+
+L'analisi della richiesta utente ha prodotto la seguente struttura:
+- **Soggetto Principale**: "{query_strutturata.get('soggetto')}"
+- **Modificatori Chiave**: {query_strutturata.get('modificatori')}
+
+Il tuo processo di ragionamento DEVE essere:
+1.  **Filtro Rigoroso sul Soggetto**: Dalla lista dei candidati, scarta TASSATIVAMENTE qualsiasi prodotto che non sia del tipo del Soggetto Principale. Un 'hamburger di carne' NON è un 'panino'.
+2.  **Ordinamento per Modificatori**: Sui prodotti rimasti, ordina i risultati in base a quanto bene corrispondono ai Modificatori Chiave.
+
+**LISTA PRODOTTI CANDIDATI:**
+{json.dumps(dettagli_semplificati, indent=2, ensure_ascii=False)}
+
+Applica questo processo e restituisci fino a {NUMERO_RISULTATI_FINALI} prodotti in ordine di pertinenza.
+Il tuo output DEVE essere un JSON con una chiave "prodotti_raccomandati" e una lista di ID.
+"""
+        try:
+            generation_config = genai.types.GenerationConfig(response_mime_type="application/json")
+            response = self.model.generate_content(prompt, generation_config=generation_config)
+            risultato = json.loads(response.text)
+            print(f"-> Re-ranking completato. ID raccomandati: {risultato.get('prodotti_raccomandati', [])}")
+            return risultato.get('prodotti_raccomandati', [])
+        except Exception as e:
+            print(f"ERRORE durante la Fase 3: {e}")
+            return []
+
+    def cerca(self, richiesta_utente):
+        # FASE 1
+        query_strutturata = self._fase1_analizza_query(richiesta_utente)
+        if not query_strutturata or not query_strutturata.get('soggetto'):
+            print("Non sono riuscito a capire il prodotto principale della tua ricerca.")
+            return
+        
+        # FASE 2
+        prodotti_candidati = self._fase2_ricerca_vettoriale(richiesta_utente)
+        if not prodotti_candidati:
+            print("Non ho trovato nessun prodotto simile alla tua ricerca.")
+            return
+
+        # FASE 3
+        id_raccomandati = self._fase3_reranking_strutturato(query_strutturata, prodotti_candidati)
+        if not id_raccomandati:
+            print("Dall'analisi finale, nessun prodotto corrisponde perfettamente alla tua richiesta.")
+            return
+
+        print("\n\n========================================")
+        print("✅ Ecco i prodotti che ti consiglio:")
+        print("========================================")
+        for product_id in id_raccomandati:
+            prodotto = self.cache_prodotti.get(product_id)
+            if prodotto:
+                dettagli = prodotto.get('product_details', {})
+                print(f"- {dettagli.get('nome', 'N/A')} (Marca: {dettagli.get('marca', 'N/A')})")
+        print("========================================")
+
+# --- Blocco di esecuzione principale ---
+if __name__ == "__main__":
+    assistant = FinalAssistant()
+    while True:
+        try:
+            query = input("\nCosa stai cercando? (scrivi 'esci' per terminare): ")
+            if query.lower() in ['esci', 'exit', 'quit']:
+                print("Alla prossima!")
+                break
+            if query:
+                assistant.cerca(query)
+        except KeyboardInterrupt:
+            print("\nAlla prossima!")
+            break

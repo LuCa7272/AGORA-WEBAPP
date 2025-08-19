@@ -1,0 +1,8 @@
+# Questa cartella contiene i file di dati per il matching avanzato
+# 
+# File necessari:
+# - cache_prodotti_gemini.json: Database dei prodotti con dettagli completi
+# - indice_mappa.json: Mappa degli indici per la ricerca vettoriale
+# - prodotti.index: File dell'indice FAISS (opzionale per versione completa)
+#
+# Questi file devono essere generati dal tuo script Python originale

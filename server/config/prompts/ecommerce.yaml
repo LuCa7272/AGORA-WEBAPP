@@ -1,0 +1,109 @@
+advancedMatchingPhase1_AnalyzeQuery:
+  description: "Fase 1 del matching avanzato: destruttura la richiesta dell'utente in un soggetto principale e modificatori."
+  notes: "Risposta forzata in JSON per un parsing affidabile. Temperatura bassa per coerenza."
+  version: "1.2"
+  parameters:
+    model: "gpt-4o"
+    temperature: 0.2
+    response_format: 
+      type: "json_object"
+  prompt: |
+    Analizza la seguente richiesta di un utente per un prodotto da supermercato. Il tuo compito è destrutturarla, identificando il Soggetto Principale e i Modificatori Chiave.
+
+    **Soggetto Principale**: È l'entità principale che l'utente vuole acquistare (es. panino, biscotto, caffè).
+    **Modificatori Chiave**: Sono gli aggettivi o i termini che descrivono il soggetto (es. hamburger, cioccolato, arabica).
+
+    RICHIESTA UTENTE: "{{userQuery}}"
+
+    Restituisci un singolo oggetto JSON con due chiavi:
+    1. "soggetto": la parola singolare che rappresenta il prodotto principale.
+    2. "modificatori": una lista di parole che descrivono le caratteristiche.
+
+    Esempi:
+    - Richiesta: "panini per hamburger" -> {"soggetto": "panino", "modificatori": ["hamburger"]}
+    - Richiesta: "biscotti carrefour integrali" -> {"soggetto": "biscotto", "modificatori": ["carrefour", "integrale"]}
+
+advancedMatchingPhase3_Rerank:
+  description: "Fase 3 del matching avanzato: riordina una lista di prodotti candidati in base all'intento strutturato dell'utente."
+  notes: "Questo è il prompt più critico. Le istruzioni sono molto dettagliate per guidare il ragionamento dell'AI."
+  version: "1.5"
+  parameters:
+    model: "gpt-4o"
+    temperature: 0.1
+    response_format: 
+      type: "json_object"
+  prompt: |
+    Sei un assistente alla spesa esperto. Il tuo compito è analizzare una lista di prodotti candidati e selezionare i più pertinenti, privilegiando l'INTENTO DELL'UTENTE.
+
+    L'analisi della richiesta utente ha prodotto la seguente struttura:
+    - **Soggetto Principale**: "{{subject}}"
+    - **Modificatori Chiave**: {{modifiers}}
+
+    LISTA PRODOTTI CANDIDATI (in formato JSON):
+    {{candidateProducts}}
+
+    Il tuo processo di ragionamento DEVE seguire questo ORDINE DI PRIORITÀ:
+    1. **Coerenza con l'Intento**: Analizza il soggetto principale e privilegia SEMPRE prodotti che appartengono alla sua categoria più naturale e diretta.
+    2. **Filtro di Rilevanza**: Dalla lista dei candidati, scarta i prodotti palesemente non pertinenti.
+    3. **Ordinamento per Modificatori**: Sui prodotti rimanenti, ordina in base a quanto bene corrispondono ai modificatori chiave.
+
+    Il tuo output DEVE essere un oggetto JSON con una singola chiave "prodotti_raccomandati", contenente una lista degli ID dei prodotti ordinati, fino a un massimo di {{maxResults}}.
+
+semanticScoring:
+  description: "Valuta la qualità di un match tra una query utente e un prodotto specifico, fornendo un punteggio di confidenza e una motivazione."
+  notes: "Usato quando lo scoring semantico è attivo nel pannello admin."
+  version: "1.0"
+  parameters:
+    model: "gpt-4o"
+    temperature: 0.3
+    response_format: 
+      type: "json_object"
+  prompt: |
+    Valuta quanto bene il seguente prodotto corrisponde alla richiesta originale dell'utente.
+
+    **Richiesta utente**: "{{userQuery}}"
+
+    **Prodotto trovato**:
+    - Nome: {{product.name}}
+    - Marca: {{product.brand}}
+    - Categoria: {{product.category}}
+    - Descrizione: {{product.description}}
+
+    Considera la corrispondenza semantica, la rilevanza della categoria e la specificità del prodotto. Fornisci la tua valutazione in formato JSON con le chiavi "confidence" (un numero da 30 a 95) e "reasoning" (una breve spiegazione in italiano).
+
+fallbackEcommerceMatch:
+  description: "Prompt di fallback per il matching e-commerce, usato quando il DB vettoriale non è disponibile."
+  version: "1.0"
+  parameters:
+    model: "gpt-4o"
+    temperature: 0.2
+    response_format:
+      type: "json_object"
+  prompt: |
+    Abbina questi prodotti generici della lista spesa a prodotti specifici disponibili su {{platform}}.
+    IMPORTANTE: Abbina SOLO prodotti che conosci esistere realmente su {{platform}}. Se non sei sicuro, NON includerlo.
+    
+    Prodotti da abbinare:
+    {{itemsList}}
+    
+    Rispondi con un oggetto JSON in questo formato:
+    {
+      "matches": [
+        {
+          "originalItem": "string",
+          "matchedProduct": "string (nome prodotto specifico)",
+          "confidence": 0.85,
+          "productId": "string (ID realistico)",
+          "productUrl": "string (URL diretto)",
+          "imageUrl": "string (URL immagine)",
+          "price": 3.50,
+          "category": "string (categoria in italiano)"
+        }
+      ]
+    }
+    
+    REGOLE: 
+    - Se non conosci prodotti specifici reali su {{platform}}, restituisci {"matches": []}
+    - Non inventare nomi, brand, URL, ID, o immagini.
+    - Tutti i testi in italiano.
+    - Confidenze realistiche (0.3-0.95).

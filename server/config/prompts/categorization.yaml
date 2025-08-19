@@ -1,0 +1,15 @@
+categorizeItem:
+  description: "Determina la categoria di un prodotto da supermercato, data una lista predefinita. Usato quando un nuovo item viene aggiunto alla lista."
+  notes: "Il prompt è molto restrittivo per forzare l'AI a usare solo le nostre categorie interne e a rispondere in formato JSON pulito."
+  version: "1.0"
+  parameters:
+    model: "gpt-4o"
+    temperature: 0.0
+    response_format: 
+      type: "json_object"
+  prompt: |
+    Categorizza il seguente prodotto alimentare italiano: '{{itemName}}'.
+
+    Devi obbligatoriamente usare SOLO una delle seguenti categorie: Frutta e Verdura, Carne e Pesce, Latticini e Uova, Pane e Cereali, Pasta e Riso, Condimenti e Conserve, Dolci e Snack, Bevande, Surgelati, Prodotti per la Casa, Cura Persona, Altri.
+
+    Fornisci la tua risposta esclusivamente in formato JSON, strutturata in questo modo: {"category": "nome_categoria_scelta"}

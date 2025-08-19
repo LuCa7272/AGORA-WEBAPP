@@ -1,0 +1,19 @@
+# Cartella per i file JSON dei prodotti
+#
+# Posiziona qui i tuoi file JSON con i dati dei prodotti
+# Formato supportato: array di oggetti prodotto o singolo oggetto prodotto
+#
+# Esempio struttura file prodotto:
+# {
+#   "id": "PROD123",
+#   "nome": "Pasta Barilla Spaghetti",
+#   "brand": "Barilla", 
+#   "C4_SalesDenomination": "Pasta di grano duro",
+#   "product_url": "https://www.amazon.it/dp/ABC123",
+#   "immagine_url": "https://images.amazon.it/image123.jpg",
+#   "breadcrumbs_1_htmlValue": "Home",
+#   "breadcrumbs_2_htmlValue": "Alimentari",
+#   "breadcrumbs_3_htmlValue": "Pasta"
+# }
+#
+# Il sistema processerà automaticamente tutti i file .json in questa cartella

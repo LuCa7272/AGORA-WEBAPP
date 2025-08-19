@@ -1,0 +1,105 @@
+# -*- coding: utf-8 -*-
+# FILE AGGIORNATO: build_vector_index.py
+
+import os
+import glob
+import json
+import faiss
+import numpy as np
+from sentence_transformers import SentenceTransformer
+
+CARTELLA_PRODOTTI = "prodotti"
+FILE_CACHE_PRODOTTI = "cache_prodotti_gemini.json"
+FILE_INDICE_VETTORIALE = "prodotti.index"
+FILE_MAPPA_INDICE_PRODOTTI = "indice_mappa.json"
+MODELLO_EMBEDDING = 'all-MiniLM-L6-v2'
+
+class VectorIndexBuilder:
+    def __init__(self):
+        print("Inizializzazione del costruttore di indici...")
+        self.embedding_model = SentenceTransformer(MODELLO_EMBEDDING)
+        self.embedding_dim = self.embedding_model.get_sentence_embedding_dimension()
+        print("Modello caricato.")
+
+    def _carica_tutti_i_prodotti(self):
+        percorso_ricerca = os.path.join(CARTELLA_PRODOTTI, '*.json')
+        lista_file_json = glob.glob(percorso_ricerca)
+        if not lista_file_json:
+            print(f"ERRORE: Nessun file .json trovato nella cartella '{CARTELLA_PRODOTTI}'.")
+            return []
+        print(f"Trovati {len(lista_file_json)} file JSON. Caricamento in corso...")
+        tutti_i_prodotti = []
+        for file_path in lista_file_json:
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    dati_file = json.load(f)
+                    if isinstance(dati_file, list):
+                        tutti_i_prodotti.extend(dati_file)
+            except Exception as e:
+                print(f"ERRORE durante la lettura di '{file_path}': {e}")
+        print(f"Totale prodotti caricati: {len(tutti_i_prodotti)}")
+        return tutti_i_prodotti
+
+    def costruisci_tutto(self):
+        for file_da_rimuovere in [FILE_CACHE_PRODOTTI, FILE_INDICE_VETTORIALE, FILE_MAPPA_INDICE_PRODOTTI]:
+            if os.path.exists(file_da_rimuovere):
+                os.remove(file_da_rimuovere)
+                print(f"Rimosso vecchio file: {file_da_rimuovere}")
+        
+        prodotti = self._carica_tutti_i_prodotti()
+        if not prodotti:
+            print("Nessun prodotto da processare. Interruzione.")
+            return
+
+        print("\nCreazione dei testi combinati per l'embedding...")
+        testi_combinati = []
+        for p in prodotti:
+            breadcrumbs_list = [v for k, v in p.items() if k.startswith('breadcrumbs_') and k.endswith('_htmlValue')]
+            categoria_retailer = " > ".join(breadcrumbs_list[1:])
+            testo_completo = ". ".join(filter(None, [
+                p.get('nome', ''), p.get('brand', ''),
+                p.get('C4_SalesDenomination', ''), p.get('descrizione_tab', ''),
+                categoria_retailer
+            ]))
+            testi_combinati.append(testo_completo)
+        
+        print("\nCreazione degli embeddings arricchiti in corso...")
+        embeddings = self.embedding_model.encode(testi_combinati, convert_to_tensor=False, show_progress_bar=True)
+        
+        print("\nCostruzione dell'indice FAISS...")
+        index = faiss.IndexFlatL2(self.embedding_dim)
+        index.add(np.array(embeddings))
+        faiss.write_index(index, FILE_INDICE_VETTORIALE)
+        print(f"-> Indice '{FILE_INDICE_VETTORIALE}' salvato.")
+
+        print("\nCreazione della mappa degli indici e della cache dei prodotti...")
+        mappa_indice = {}
+        cache_prodotti = {}
+        for i, prodotto in enumerate(prodotti):
+            product_id = prodotto.get('id')
+            if product_id:
+                mappa_indice[product_id] = i
+                # --- MODIFICA CHIAVE: Aggiunta degli URL alla cache ---
+                cache_prodotti[product_id] = {
+                    'product_details': {
+                        'id': product_id,
+                        'nome': prodotto.get('nome', ''),
+                        'marca': prodotto.get('brand', ''),
+                        'denom_vendita': prodotto.get('C4_SalesDenomination', ''),
+                        'product_url': prodotto.get('product_url', ''),      # <-- Aggiunto
+                        'immagine_url': prodotto.get('immagine_url', '')   # <-- Aggiunto
+                    },
+                    'ai_result': {} 
+                }
+        
+        with open(FILE_MAPPA_INDICE_PRODOTTI, 'w', encoding='utf-8') as f: json.dump(mappa_indice, f)
+        print(f"-> Mappa '{FILE_MAPPA_INDICE_PRODOTTI}' salvata.")
+        
+        with open(FILE_CACHE_PRODOTTI, 'w', encoding='utf-8') as f: json.dump(cache_prodotti, f)
+        print(f"-> Cache '{FILE_CACHE_PRODOTTI}' salvata con i dati degli URL.")
+
+        print("\nPROCESSO DI PREPARAZIONE COMPLETATO!")
+
+if __name__ == "__main__":
+    builder = VectorIndexBuilder()
+    builder.costruisci_tutto()
