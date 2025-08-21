@@ -1,10 +1,14 @@
 // FILE: client/pages/home.tsx
 
 import { useState, useEffect } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"; // <-- MODIFICA QUI
+// NUOVI IMPORT PER IL FORM DI CREAZIONE LISTA
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { 
   FileText, History, Brain, Zap, ShoppingBasket, ShoppingCart, Settings, Plus, LogOut, Loader2,
-  MapPin, Store as StoreIcon, Edit, Share2 // Aggiunta icona Share2
+  MapPin, Store as StoreIcon, Edit, Share2
 } from "lucide-react";
 import { Link } from "wouter";
 import ModeToggle from "@/components/mode-toggle";
@@ -15,7 +19,7 @@ import SmartSuggestions from "@/components/smart-suggestions";
 import ProductMatching from "@/components/product-matching";
 import { ShoppingCartView } from "@/components/shopping-cart";
 import { UpdateNicknameDialog } from "@/components/update-nickname-dialog";
-import { ShareListDialog } from "@/components/ShareListDialog"; // NUOVO IMPORT
+import { ShareListDialog } from "@/components/ShareListDialog";
 
 import { useAuth } from "@/hooks/use-auth";
 import type { ShoppingList as ShoppingListType, Store } from "@shared/schema";
@@ -33,7 +37,12 @@ import {
   DialogHeader,
   DialogTitle,
   DialogDescription,
+  DialogFooter,
+  DialogClose
 } from "@/components/ui/dialog";
+// NUOVI IMPORT PER IL FORM
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { processOfflineQueue, getOfflineQueue } from "@/lib/offline-queue";
@@ -43,6 +52,12 @@ const MOCK_COORDINATES = {
   latitude: 45.4582,
   longitude: 9.1633,
 };
+
+// NUOVO: Schema per la validazione del form di creazione lista
+const newListSchema = z.object({
+  name: z.string().min(1, "Il nome della lista e' obbligatorio.").max(50, "Il nome non puo' superare i 50 caratteri."),
+});
+type NewListFormValues = z.infer<typeof newListSchema>;
 
 export default function Home() {
   const { user, logout, isAuthenticated, isLoading: isAuthLoading } = useAuth();
@@ -60,6 +75,13 @@ export default function Home() {
   const [categoryOrder, setCategoryOrder] = useState<string[]>([]);
   
   const [isNicknameDialogOpen, setIsNicknameDialogOpen] = useState(false);
+  const [isAddListDialogOpen, setIsAddListDialogOpen] = useState(false); // NUOVO STATO
+
+  // NUOVO: Hook form per il dialogo di creazione lista
+  const form = useForm<NewListFormValues>({
+    resolver: zodResolver(newListSchema),
+    defaultValues: { name: "" },
+  });
 
   const { data: lists = [], isLoading: isLoadingLists } = useQuery<ShoppingListType[]>({
     queryKey: ["lists"],
@@ -70,18 +92,48 @@ export default function Home() {
     },
     enabled: !!user,
   });
+
+  // NUOVO: Mutation per creare una nuova lista
+  const createListMutation = useMutation({
+    mutationFn: async (newList: NewListFormValues): Promise<ShoppingListType> => {
+        const response = await apiRequest("POST", "/api/lists", newList);
+        return response.json();
+    },
+    onSuccess: (newList) => {
+        toast({ title: "Lista creata!", description: `La lista "${newList.name}" e' stata creata.` });
+        queryClient.invalidateQueries({ queryKey: ['lists'] });
+        setActiveListId(newList.id);
+        setIsAddListDialogOpen(false);
+        form.reset();
+    },
+    onError: (error: any) => {
+        toast({ title: "Errore", description: error.message, variant: "destructive" });
+    }
+  });
+
+  const onAddListSubmit = (data: NewListFormValues) => {
+    createListMutation.mutate(data);
+  };
   
-  // Trova l'oggetto completo della lista attiva per ottenere il nome e l'ownerId
+  // MODIFICA: Logica di useEffect resa più robusta per gestire tutti i casi
+  useEffect(() => {
+    if (isLoadingLists) return; // Non fare nulla mentre i dati si stanno caricando
+
+    if (lists && lists.length > 0) {
+        // Se non c'è una lista attiva o quella attiva non è più valida, imposta la prima come attiva.
+        const currentListExists = lists.some(l => l.id === activeListId);
+        if (!activeListId || !currentListExists) {
+            setActiveListId(lists[0].id);
+        }
+    } else {
+        // Se non ci sono liste, assicurati che non ci sia un ID attivo.
+        setActiveListId(null);
+    }
+  }, [lists, activeListId, isLoadingLists]);
+
   const activeList = lists.find(list => list.id === activeListId);
-  // Controlla se l'utente corrente è il proprietario della lista attiva
   const isOwner = user && activeList && user.id === activeList.ownerId;
 
-  useEffect(() => {
-    if (lists && lists.length > 0 && !activeListId) {
-      setActiveListId(lists[0].id);
-    }
-  }, [lists, activeListId]);
-  
   useEffect(() => {
     const trySync = async () => {
       if (isAuthLoading || !isAuthenticated) {
@@ -126,7 +178,7 @@ export default function Home() {
   const getRealGpsPosition = (): Promise<GeolocationCoordinates> => {
     return new Promise((resolve, reject) => {
       if (!navigator.geolocation) {
-        return reject(new Error("La geolocalizzazione non è supportata dal browser."));
+        return reject(new Error("La geolocalizzazione non e' supportata dal browser."));
       }
       navigator.geolocation.getCurrentPosition(
         (position) => resolve(position.coords),
@@ -141,7 +193,6 @@ export default function Home() {
 
     try {
       let coords: { latitude: number, longitude: number };
-      
       const realCoords = await getRealGpsPosition();
       coords = realCoords;
 
@@ -259,15 +310,20 @@ export default function Home() {
         </div>
       );
     }
-    if (!activeListId || !lists || lists.length === 0) {
+    // MODIFICA: Gestione robusta del caso in cui l'utente non ha liste
+    if (lists.length === 0) {
       return (
         <div className="text-center py-16 px-4">
-          <h3 className="md3-headline-small mb-3">Nessuna lista trovata</h3>
+          <h3 className="md3-headline-small mb-3">Benvenuto!</h3>
           <p className="md3-body-large text-[color:var(--md-sys-color-on-surface-variant)]">
-            Crea la tua prima lista per iniziare.
+            Crea la tua prima lista cliccando il pulsante "+" in alto.
           </p>
         </div>
       );
+    }
+    // Se ci sono liste ma nessuna Ã¨ ancora stata selezionata (raro), mostra un caricamento
+    if (!activeListId) {
+       return <div className="flex justify-center items-center p-8"><Loader2 className="h-8 w-8 animate-spin" /></div>;
     }
 
     switch (activeTab) {
@@ -302,87 +358,32 @@ export default function Home() {
         <header className={`md3-elevation-1 sticky top-0 z-40 transition-colors duration-300 ${isMarketMode ? 'md3-tertiary-container' : 'md3-surface-container'}`}>
           <div className="px-4 py-3 space-y-3">
             <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-3 flex-shrink min-w-0">
-                  <div className="w-10 h-10 md3-primary-container rounded-2xl flex items-center justify-center md3-elevation-1 flex-shrink-0">
-                      <ShoppingCart className="w-5 h-5" />
-                  </div>
-                  <div className="flex items-center gap-1 truncate">
-                    <div className="truncate">
-                        <p className="md3-label-medium text-[color:var(--md-sys-color-on-surface-variant)]">Ciao,</p>
-                        <p className="md3-body-large font-bold truncate">
-                          {getUserDisplayName()}
-                        </p>
-                    </div>
-                    {user && (
-                      <button 
-                        onClick={() => setIsNicknameDialogOpen(true)} 
-                        className="p-1 rounded-full text-[color:var(--md-sys-color-on-surface-variant)] hover:bg-black/10 flex-shrink-0"
-                        title="Modifica nickname"
-                      >
-                        <Edit className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
-              </div>
-              <div className="flex items-center space-x-1 flex-shrink-0">
-                  <button onClick={handleLogout} className="md3-button-text p-2 rounded-full" title="Logout">
-                      <LogOut className="w-5 h-5" />
-                  </button>
-                  <Link href="/admin">
-                      <button className="md3-button-text p-2 rounded-full" title="Admin">
-                          <Settings className="w-5 h-5" />
-                      </button>
-                  </Link>
-              </div>
+              <div className="flex items-center space-x-3 flex-shrink min-w-0"><div className="w-10 h-10 md3-primary-container rounded-2xl flex items-center justify-center md3-elevation-1 flex-shrink-0"><ShoppingCart className="w-5 h-5" /></div><div className="flex items-center gap-1 truncate"><div className="truncate"><p className="md3-label-medium text-[color:var(--md-sys-color-on-surface-variant)]">Ciao,</p><p className="md3-body-large font-bold truncate">{getUserDisplayName()}</p></div>{user && (<button onClick={() => setIsNicknameDialogOpen(true)} className="p-1 rounded-full text-[color:var(--md-sys-color-on-surface-variant)] hover:bg-black/10 flex-shrink-0" title="Modifica nickname"><Edit className="w-4 h-4" /></button>)}</div></div>
+              <div className="flex items-center space-x-1 flex-shrink-0"><button onClick={handleLogout} className="md3-button-text p-2 rounded-full" title="Logout"><LogOut className="w-5 h-5" /></button><Link href="/admin"><button className="md3-button-text p-2 rounded-full" title="Admin"><Settings className="w-5 h-5" /></button></Link></div>
             </div>
-            {pendingSyncs > 0 && (
-                <div className="flex items-center justify-center">
-                    <Badge variant="destructive">
-                        {pendingSyncs} azioni in attesa di sincronizzazione
-                    </Badge>
-                </div>
-            )}
+            {pendingSyncs > 0 && (<div className="flex items-center justify-center"><Badge variant="destructive">{pendingSyncs} azioni in attesa di sincronizzazione</Badge></div>)}
             <div className="flex items-center justify-between gap-2">
                <div className="flex-1">
-                  {lists && lists.length > 0 && activeListId && (
-                      <Select
-                          value={activeListId.toString()}
-                          onValueChange={(value) => setActiveListId(Number(value))}
-                      >
-                          <SelectTrigger className="h-12 md3-surface-container-high rounded-full border-none md3-title-medium">
-                              <SelectValue placeholder="Seleziona una lista..." />
-                          </SelectTrigger>
-                          <SelectContent>
-                              {lists.map(list => (
-                                  <SelectItem key={list.id} value={list.id.toString()}>
-                                      {list.name}
-                                  </SelectItem>
-                              ))}
-                          </SelectContent>
-                      </Select>
-                  )}
+                  <Select value={activeListId ? activeListId.toString() : ""} onValueChange={(value) => setActiveListId(Number(value))}>
+                      <SelectTrigger className="h-12 md3-surface-container-high rounded-full border-none md3-title-medium">
+                          <SelectValue placeholder="Seleziona o crea una lista..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                          {lists.length > 0 ? (
+                            lists.map(list => (<SelectItem key={list.id} value={list.id.toString()}>{list.name}</SelectItem>))
+                          ) : (
+                            <div className="p-4 text-center text-sm text-muted-foreground">Nessuna lista. Clicca "+" per crearne una.</div>
+                          )}
+                      </SelectContent>
+                  </Select>
                </div>
-               
-               {/* --- INTEGRAZIONE DEL COMPONENTE SHARE --- */}
-               <div className="flex items-center gap-2">
-                    {isOwner && activeList && (
-                        <ShareListDialog activeListId={activeList.id} listName={activeList.name} />
-                    )}
+               <div className="flex items-center gap-2 flex-shrink-0">
+                    <Button variant="outline" size="icon" className="h-12 w-12 rounded-full" onClick={() => setIsAddListDialogOpen(true)} title="Crea nuova lista"><Plus className="w-5 h-5" /></Button>
+                    {isOwner && activeList && (<ShareListDialog activeListId={activeList.id} listName={activeList.name} />)}
                     <ModeToggle isMarketMode={isMarketMode} onToggle={handleToggleMode} />
                </div>
             </div>
-            {isMarketMode && (
-                <div className="flex items-center justify-center gap-2 text-sm text-[color:var(--md-sys-color-on-tertiary-container)] bg-black/10 px-3 py-1 rounded-full animate-in fade-in duration-500">
-                    {activeStore ? (
-                        <>
-                            <StoreIcon size={14} />
-                            <span>{activeStore.name}</span>
-                        </>
-                    ) : (
-                        <span>Modalita' Market Generica</span>
-                    )}
-                </div>
-            )}
+            {isMarketMode && (<div className="flex items-center justify-center gap-2 text-sm text-[color:var(--md-sys-color-on-tertiary-container)] bg-black/10 px-3 py-1 rounded-full animate-in fade-in duration-500">{activeStore ? (<><StoreIcon size={14} /><span>{activeStore.name}</span></>) : (<span>Modalita' Market Generica</span>)}</div>)}
           </div>
         </header>
 
@@ -402,9 +403,7 @@ export default function Home() {
                   <div className={`flex items-center justify-center w-16 h-8 rounded-full transition-all duration-300 ${isActive ? "md3-secondary-container" : ""}`}>
                     <IconComponent className={`w-6 h-6 transition-colors duration-200 ${isActive ? "text-[color:var(--md-sys-color-on-secondary-container)]" : "text-[color:var(--md-sys-color-on-surface-variant)]"}`} />
                   </div>
-                  <span className={`md3-label-medium transition-colors duration-200 ${isActive ? "text-[color:var(--md-sys-color-on-surface)] font-bold" : "text-[color:var(--md-sys-color-on-surface-variant)]"}`}>
-                    {tab.label}
-                  </span>
+                  <span className={`md3-label-medium transition-colors duration-200 ${isActive ? "text-[color:var(--md-sys-color-on-surface)] font-bold" : "text-[color:var(--md-sys-color-on-surface-variant)]"}`}>{tab.label}</span>
                 </button>
               );
             })}
@@ -463,6 +462,21 @@ export default function Home() {
                 setCategoryOrder([]);
              }}>Nessuno di questi / Continua senza negozio</Button>
           </div>
+        </DialogContent>
+      </Dialog>
+      
+      <Dialog open={isAddListDialogOpen} onOpenChange={setIsAddListDialogOpen}>
+        <DialogContent>
+            <DialogHeader><DialogTitle>Crea una nuova lista</DialogTitle><DialogDescription>Inserisci un nome per la tua nuova lista della spesa.</DialogDescription></DialogHeader>
+            <Form {...form}>
+                <form onSubmit={form.handleSubmit(onAddListSubmit)} className="space-y-4 py-4">
+                    <FormField control={form.control} name="name" render={({ field }) => (<FormItem><FormLabel>Nome della lista</FormLabel><FormControl><Input placeholder="Es: Spesa per le vacanze" {...field} /></FormControl><FormMessage /></FormItem>)} />
+                    <DialogFooter>
+                        <DialogClose asChild><Button type="button" variant="secondary">Annulla</Button></DialogClose>
+                        <Button type="submit" disabled={createListMutation.isPending}>{createListMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Crea Lista</Button>
+                    </DialogFooter>
+                </form>
+            </Form>
         </DialogContent>
       </Dialog>
     </>

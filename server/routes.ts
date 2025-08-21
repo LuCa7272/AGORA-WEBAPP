@@ -232,6 +232,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       next(error);
     }
   });
+  
+  // --- INSERISCI QUESTO BLOCCO QUI ---
+  app.post("/api/lists", isAuthenticated, async (req, res, next) => {
+    try {
+      const { name } = req.body;
+      const userId = (req.user as User).id;
+
+      if (!name || typeof name !== 'string' || name.trim().length === 0) {
+        return res.status(400).json({ message: "Il nome della lista e' obbligatorio." });
+      }
+
+      const newList = await storage.createList(userId, name.trim());
+      res.status(201).json(newList);
+    } catch (error) {
+      next(error);
+    }
+  });
+  // --- FINE BLOCCO DA INSERIRE ---
 
   app.get("/api/lists/:listId/items", isAuthenticated, isListMember, async (req, res, next) => {
     try {

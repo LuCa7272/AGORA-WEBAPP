@@ -17,10 +17,11 @@ export interface IStorage {
   // Users
   getUserById(id: number): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
-  findUserByEmail(email: string): Promise<User | undefined>; // Aggiunto per coerenza
+  findUserByEmail(email: string): Promise<User | undefined>;
 
   // Shopping Lists
   createDefaultListForUser(userId: number): Promise<ShoppingList>;
+  createList(userId: number, name: string): Promise<ShoppingList>; // NUOVA FUNZIONE
   getListsForUser(userId: number): Promise<ShoppingList[]>;
   isUserMemberOfList(userId: number, listId: number, roles?: Array<'owner' | 'editor' | 'viewer'>): Promise<boolean>;
   
@@ -75,16 +76,18 @@ class DrizzleStorage implements IStorage {
     return user;
   }
   
-  // Alias per chiarezza semantica
   async findUserByEmail(email: string): Promise<User | undefined> {
     return this.getUserByEmail(email);
   }
 
   // === SHOPPING LISTS ===
   async createDefaultListForUser(userId: number): Promise<ShoppingList> {
-    // Crea la lista
-    const [newList] = await db.insert(shoppingLists).values({ name: "La Mia Lista della Spesa", ownerId: userId }).returning();
-    // Aggiunge il creatore come 'owner' nella tabella dei membri
+    return this.createList(userId, "La Mia Lista della Spesa");
+  }
+
+  // NUOVA FUNZIONE per creare una lista generica
+  async createList(userId: number, name: string): Promise<ShoppingList> {
+    const [newList] = await db.insert(shoppingLists).values({ name, ownerId: userId }).returning();
     await db.insert(listMembers).values({ listId: newList.id, userId: userId, role: "owner" });
     return newList;
   }
@@ -95,7 +98,6 @@ class DrizzleStorage implements IStorage {
     
     const listIds = memberships.map(m => m.listId);
     
-    // Drizzle per better-sqlite non ha `inArray`, quindi filtriamo dopo la query
     const allLists = await db.select().from(shoppingLists); 
     return allLists.filter(list => listIds.includes(list.id));
   }
@@ -106,17 +108,10 @@ class DrizzleStorage implements IStorage {
         eq(listMembers.listId, listId)
     ];
 
-    // Se vengono specificati dei ruoli, li aggiungiamo alla query
-    if (roles && roles.length > 0) {
-        // Questa parte richiede un workaround per l'assenza di `inArray`
-        // Per ora, lo gestiamo a livello di applicazione. Per DB piÃ¹ potenti, si userebbe `inArray`.
-    }
-
     const [membership] = await db.select().from(listMembers).where(and(...conditions)).limit(1);
     
     if (!membership) return false;
 
-    // Se sono richiesti ruoli specifici, controlliamo anche quello
     if (roles && roles.length > 0) {
         return roles.includes(membership.role as any);
     }
@@ -158,7 +153,7 @@ class DrizzleStorage implements IStorage {
       await db.update(invitations).set({ status }).where(eq(invitations.id, tokenId));
   }
 
-  // === SHOPPING ITEMS === (logica invariata)
+  // === SHOPPING ITEMS ===
   async getShoppingItemsByListId(listId: number): Promise<ShoppingItem[]> {
     return db.select().from(shoppingItems).where(eq(shoppingItems.listId, listId)).orderBy(desc(shoppingItems.dateAdded));
   }
@@ -202,12 +197,12 @@ class DrizzleStorage implements IStorage {
     await db.delete(shoppingItems).where(eq(shoppingItems.id, id));
   }
 
-  // === PURCHASE HISTORY === (logica invariata)
+  // === PURCHASE HISTORY ===
   async getPurchaseHistoryByListId(listId: number): Promise<PurchaseHistory[]> {
     return db.select().from(purchaseHistory).where(eq(purchaseHistory.listId, listId)).orderBy(desc(purchaseHistory.datePurchased));
   }
   
-  // === SUGGESTIONS === (logica invariata)
+  // === SUGGESTIONS ===
   async getSuggestionsByUserId(userId: number): Promise<Suggestion[]> {
     return db.select().from(suggestions).where(eq(suggestions.userId, userId)).orderBy(desc(suggestions.confidence));
   }
@@ -223,7 +218,7 @@ class DrizzleStorage implements IStorage {
     return updatedSuggestion;
   }
 
-  // === E-COMMERCE MATCHES === (logica invariata)
+  // === E-COMMERCE MATCHES ===
   async getEcommerceMatchesByUserId(userId: number, platform: string): Promise<EcommerceMatch[]> {
     return db.select().from(ecommerceMatches).where(and(eq(ecommerceMatches.userId, userId), eq(ecommerceMatches.platform, platform))).orderBy(desc(ecommerceMatches.confidence));
   }
@@ -241,7 +236,7 @@ class DrizzleStorage implements IStorage {
     await db.delete(ecommerceMatches).where(and(eq(ecommerceMatches.platform, platform), eq(ecommerceMatches.userId, userId)));
   }
 
-  // === STORES === (logica invariata)
+  // === STORES ===
   async findStoreByExternalId(externalId: string): Promise<Store | undefined> {
     if (!externalId) return undefined;
     const [store] = await db.select().from(stores).where(eq(stores.externalId, externalId)).limit(1);
@@ -253,14 +248,14 @@ class DrizzleStorage implements IStorage {
     return newStore;
   }
 
-  // === PURCHASE EVENTS === (logica invariata)
+  // === PURCHASE EVENTS ===
   async createPurchaseEvent(event: { userId: number; storeId: number; categoryName: string }): Promise<PurchaseEvent> {
     const [newEvent] = await db.insert(purchase_events).values(event).returning();
     console.log(`Event in-store registrato per utente ${event.userId} nel negozio ${event.storeId} [Categoria: ${event.categoryName}]`);
     return newEvent;
   }
 
-  // === STORE LAYOUTS === (logica invariata)
+  // === STORE LAYOUTS ===
   async getStoreLayout(storeId: number): Promise<StoreLayout | undefined> {
     const [layout] = await db.select().from(store_layouts).where(eq(store_layouts.storeId, storeId)).limit(1);
     return layout;
