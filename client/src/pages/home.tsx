@@ -1,10 +1,10 @@
-// FILE: client/pages/home.tsx (VERSIONE FINALE CORRETTA E ROBUSTA)
+// FILE: client/pages/home.tsx
 
 import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { 
   FileText, History, Brain, Zap, ShoppingBasket, ShoppingCart, Settings, Plus, LogOut, Loader2,
-  MapPin, Store as StoreIcon, Edit
+  MapPin, Store as StoreIcon, Edit, Share2 // Aggiunta icona Share2
 } from "lucide-react";
 import { Link } from "wouter";
 import ModeToggle from "@/components/mode-toggle";
@@ -15,6 +15,7 @@ import SmartSuggestions from "@/components/smart-suggestions";
 import ProductMatching from "@/components/product-matching";
 import { ShoppingCartView } from "@/components/shopping-cart";
 import { UpdateNicknameDialog } from "@/components/update-nickname-dialog";
+import { ShareListDialog } from "@/components/ShareListDialog"; // NUOVO IMPORT
 
 import { useAuth } from "@/hooks/use-auth";
 import type { ShoppingList as ShoppingListType, Store } from "@shared/schema";
@@ -60,7 +61,7 @@ export default function Home() {
   
   const [isNicknameDialogOpen, setIsNicknameDialogOpen] = useState(false);
 
-  const { data: lists, isLoading: isLoadingLists } = useQuery<ShoppingListType[]>({
+  const { data: lists = [], isLoading: isLoadingLists } = useQuery<ShoppingListType[]>({
     queryKey: ["lists"],
     queryFn: async () => {
         if (!user) return [];
@@ -69,6 +70,11 @@ export default function Home() {
     },
     enabled: !!user,
   });
+  
+  // Trova l'oggetto completo della lista attiva per ottenere il nome e l'ownerId
+  const activeList = lists.find(list => list.id === activeListId);
+  // Controlla se l'utente corrente è il proprietario della lista attiva
+  const isOwner = user && activeList && user.id === activeList.ownerId;
 
   useEffect(() => {
     if (lists && lists.length > 0 && !activeListId) {
@@ -141,7 +147,7 @@ export default function Home() {
 
       if (import.meta.env.DEV) {
         console.warn("DEV MODE: Sovrascrivo le coordinate GPS con quelle di test.");
-        toast({ title: "Modalità  Sviluppo", description: "Utilizzo coordinate di test." });
+        toast({ title: "Modalita' Sviluppo", description: "Utilizzo coordinate di test." });
         coords = MOCK_COORDINATES;
       }
 
@@ -154,7 +160,7 @@ export default function Home() {
       if (foundStores.length === 0) {
         toast({
           title: "Nessun negozio trovato nelle vicinanze",
-          description: "Modalità  Market attivata senza ordinamento. Gli acquisti non saranno salvati nelle statistiche.",
+          description: "Modalita' Market attivata senza ordinamento. Gli acquisti non saranno salvati nelle statistiche.",
           duration: 5000,
         });
         setActiveStore(null);
@@ -202,33 +208,23 @@ export default function Home() {
 
   const handleToggleMode = (newMode: boolean) => {
     if (isCheckingIn) return;
-
-// --- MODIFICA CHIAVE INIZIA QUI ---
-
-    // 1. Aggiorna lo stato della UI immediatamente.
-    // Questo fa sì che l'app entri in Market Mode anche offline.
     setIsMarketMode(newMode);
 
     if (newMode) {
-      // 2. Controlla la connessione PRIMA di tentare il check-in.
       if (navigator.onLine) {
-        // Se siamo online, procedi con il check-in per ottimizzare la lista.
         handleCheckIn();
       } else {
-        // Se siamo offline, informa l'utente e attiva la modalità generica.
         toast({
-          title: "Modalità Market Offline",
-          description: "La lista non può essere ottimizzata. Verrà usata la categorizzazione standard.",
+          title: "Modalita' Market Offline",
+          description: "La lista non puo' essere ottimizzata. Verra' usata la categorizzazione standard.",
         });
         setActiveStore(null);
         setCategoryOrder([]);
       }
     } else {
-      // Quando si esce dalla modalità market, resetta sempre lo stato.
       setActiveStore(null);
       setCategoryOrder([]);
     }
-    // --- MODIFICA CHIAVE FINISCE QUI ---
   };
 
   const tabs = [
@@ -317,7 +313,6 @@ export default function Home() {
                           {getUserDisplayName()}
                         </p>
                     </div>
-                    {/* --- FIX: Aggiunto controllo `user &&` per il pulsante --- */}
                     {user && (
                       <button 
                         onClick={() => setIsNicknameDialogOpen(true)} 
@@ -347,8 +342,8 @@ export default function Home() {
                     </Badge>
                 </div>
             )}
-            <div className="flex items-center justify-between">
-               <div className="flex-1 mr-2">
+            <div className="flex items-center justify-between gap-2">
+               <div className="flex-1">
                   {lists && lists.length > 0 && activeListId && (
                       <Select
                           value={activeListId.toString()}
@@ -367,7 +362,14 @@ export default function Home() {
                       </Select>
                   )}
                </div>
-               <ModeToggle isMarketMode={isMarketMode} onToggle={handleToggleMode} />
+               
+               {/* --- INTEGRAZIONE DEL COMPONENTE SHARE --- */}
+               <div className="flex items-center gap-2">
+                    {isOwner && activeList && (
+                        <ShareListDialog activeListId={activeList.id} listName={activeList.name} />
+                    )}
+                    <ModeToggle isMarketMode={isMarketMode} onToggle={handleToggleMode} />
+               </div>
             </div>
             {isMarketMode && (
                 <div className="flex items-center justify-center gap-2 text-sm text-[color:var(--md-sys-color-on-tertiary-container)] bg-black/10 px-3 py-1 rounded-full animate-in fade-in duration-500">
@@ -377,7 +379,7 @@ export default function Home() {
                             <span>{activeStore.name}</span>
                         </>
                     ) : (
-                        <span>ModalitÃ  Market Generica</span>
+                        <span>Modalita' Market Generica</span>
                     )}
                 </div>
             )}
@@ -422,7 +424,6 @@ export default function Home() {
         )}
       </div>
       
-      {/* --- FIX: Renderizza il dialogo solo se c'Ã¨ un utente --- */}
       {user && (
         <UpdateNicknameDialog 
           user={user} 

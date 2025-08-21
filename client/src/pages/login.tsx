@@ -2,7 +2,8 @@
 
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useLocation, Link } from "wouter";
+// IMPORTIAMO useSearch per leggere i query parameters
+import { useLocation, Link, useSearch } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 import type { z } from "zod";
 
@@ -22,10 +23,10 @@ import { AlertTriangle, LogIn, Mail, Lock } from "lucide-react";
 
 export default function LoginPage() {
   const [, navigate] = useLocation();
+  const search = useSearch(); // Hook per accedere ai query params
   const { login, authSchema, isAuthenticated } = useAuth();
   const { toast } = useToast();
 
-  // Se l'utente è già loggato, reindirizza alla home
   if (isAuthenticated) {
     navigate("/");
   }
@@ -47,11 +48,22 @@ export default function LoginPage() {
         title: "Accesso effettuato!",
         description: "Bentornato nella tua SmartCart.",
       });
-      navigate("/");
+
+      // --- LOGICA DI REINDIRIZZAMENTO MODIFICATA ---
+      const params = new URLSearchParams(search);
+      const redirectUrl = params.get('redirect');
+
+      if (redirectUrl) {
+        // Se c'Ã¨ un URL di redirect (es. dall'invito), vai lÃ¬
+        navigate(redirectUrl);
+      } else {
+        // Altrimenti, vai alla home come al solito
+        navigate("/");
+      }
+      // --- FINE MODIFICA ---
+
     } catch (error: any) {
-      // Gli errori specifici (es. password errata) vengono gestiti dal form.
-      // Qui gestiamo errori generici (es. server offline).
-      const errorMessage = error.message || "Si è verificato un errore inaspettato.";
+      const errorMessage = error.message || "Si Ã¨ verificato un errore inaspettato.";
       form.setError("root", { message: errorMessage });
       console.error("Login error:", error);
     }

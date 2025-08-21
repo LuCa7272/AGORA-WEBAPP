@@ -1,13 +1,10 @@
-// FILE: server/routes.ts (VERSIONE VERAMENTE COMPLETA E CORRETTA)
+// FILE: server/routes.ts
 
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import {
   insertShoppingItemSchema,
-  insertPurchaseHistorySchema,
-  insertSuggestionSchema,
-  insertEcommerceMatchSchema,
   shoppingItems
 } from "@shared/schema";
 import { advancedMatcher } from './services/advanced-matching.js';
@@ -17,26 +14,30 @@ import { geolocationService } from './services/geolocationService.js';
 import session from "express-session";
 import bcrypt from "bcrypt";
 import passport from "./auth";
-import { users, type User, type PurchaseHistory, type ShoppingItem } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { users, shoppingLists, type User, type PurchaseHistory, type ShoppingItem, type ShoppingList } from "@shared/schema";
+import { eq, and } from "drizzle-orm";
 import { db } from './db';
 import crypto from 'crypto';
-import { sendVerificationEmail } from './services/email';
+import { sendVerificationEmail, sendListInvitationEmail } from './services/email';
+
+// =================================================================
+// MIDDLEWARE DI AUTORIZZAZIONE
+// =================================================================
 
 const isAuthenticated = (req: Request, res: Response, next: NextFunction) => {
-  const user = req.user as User;
-  if (req.isAuthenticated() && user.isEmailVerified) {
-    return next();
-  }
-  if (req.isAuthenticated() && !user.isEmailVerified) {
-    return res.status(403).json({ message: "Accesso negato. L'email non Ã¨ stata verificata." });
+  if (req.isAuthenticated()) {
+      const user = req.user as User;
+      if (user.isEmailVerified) {
+          return next();
+      }
+      return res.status(403).json({ message: "Accesso negato. L'email non e' stata verificata." });
   }
   res.status(401).json({ message: "Accesso non autorizzato. Effettua il login." });
 };
 
 const isListMember = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const listIdParam = req.params.listId || req.body.listId;
+    const listIdParam = req.params.listId;
     const listId = parseInt(listIdParam, 10);
     const userId = (req.user as User).id;
 
@@ -51,6 +52,20 @@ const isListMember = async (req: Request, res: Response, next: NextFunction) => 
   } catch (error) {
     next(error);
   }
+};
+
+const isListOwner = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const listId = parseInt(req.params.listId, 10);
+        const userId = (req.user as User).id;
+        const isOwner = await storage.isUserMemberOfList(userId, listId, ['owner']);
+        if (isOwner) {
+            return next();
+        }
+        res.status(403).json({ message: "Accesso negato. Solo il proprietario puo' eseguire questa azione." });
+    } catch (error) {
+        next(error);
+    }
 };
 
 const isItemOwner = async (req: Request, res: Response, next: NextFunction) => {
@@ -77,11 +92,10 @@ const isItemOwner = async (req: Request, res: Response, next: NextFunction) => {
   }
 };
 
-export async function registerRoutes(app: Express): Promise<Server> {
-  console.log("--- Il file server/routes.ts ÃƒÂ¨ stato caricato e le rotte vengono registrate ---");
 
+export async function registerRoutes(app: Express): Promise<Server> {
   if (!process.env.SESSION_SECRET) {
-    throw new Error("SESSION_SECRET non ÃƒÂ¨ definita nel file .env.");
+    throw new Error("SESSION_SECRET non e' definita nel file .env.");
   }
   app.use(
     session({
@@ -104,11 +118,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Email e password sono obbligatori." });
       }
       if (nickname && nickname.length > 8) {
-        return res.status(400).json({ message: "Il nickname non può superare gli 8 caratteri." });
+        return res.status(400).json({ message: "Il nickname non puo' superare gli 8 caratteri." });
       }
       const existingUser = await db.select().from(users).where(eq(users.email, email.toLowerCase())).limit(1);
       if (existingUser.length > 0) {
-        return res.status(409).json({ message: "Un utente con questa email esiste giÃƒÂ ." });
+        return res.status(409).json({ message: "Un utente con questa email esiste gia'." });
       }
       const hashedPassword = await bcrypt.hash(password, 10);
       const verificationToken = crypto.randomBytes(32).toString('hex');
@@ -141,7 +155,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const result = await db.select().from(users).where(eq(users.emailVerificationToken, token)).limit(1);
       const user = result[0];
       if (!user) {
-        return res.status(404).send("<h1>Errore: Token non valido o giÃƒÂ  utilizzato.</h1>");
+        return res.status(404).send("<h1>Errore: Token non valido o gia' utilizzato.</h1>");
       }
       if (user.emailVerificationTokenExpires && new Date() > new Date(user.emailVerificationTokenExpires)) {
         return res.status(400).send("<h1>Errore: Token di verifica scaduto.</h1>");
@@ -153,11 +167,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           emailVerificationTokenExpires: null
         })
         .where(eq(users.id, user.id));
-      console.log(`Ã¢Å“â€¦ Email verificata con successo per l'utente: ${user.email}`);
+      console.log(`Email verificata con successo per l'utente: ${user.email}`);
       res.send(`
         <div style="font-family: sans-serif; text-align: center; padding: 40px;">
-          <h1>Ã¢Å“â€¦ Email Verificata con Successo!</h1>
-          <p>Il tuo account ÃƒÂ¨ stato attivato. Ora puoi tornare all'applicazione ed effettuare il login.</p>
+          <h1>Email Verificata con Successo!</h1>
+          <p>Il tuo account e' stato attivato. Ora puoi tornare all'applicazione ed effettuare il login.</p>
           <a href="/login" style="display: inline-block; margin-top: 20px; padding: 10px 20px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px;">
             Vai al Login
           </a>
@@ -195,28 +209,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ROTTE PROTETTE
   // =================================================================
 
-  // === ROTTA MODIFICA NICKNAME ===
   app.put("/api/user/nickname", isAuthenticated, async (req, res, next) => {
     try {
         const { nickname } = req.body;
         const userId = (req.user as User).id;
-
-        // Validazione
         if (!nickname || nickname.length > 8 || nickname.length < 3) {
             return res.status(400).json({ message: "Il nickname deve avere tra 3 e 8 caratteri." });
         }
-        
-        // Aggiorna il DB
         await db.update(users).set({ nickname: nickname }).where(eq(users.id, userId));
-
         res.json({ success: true, message: "Nickname aggiornato con successo." });
-
     } catch (error) {
         next(error);
     }
   });
 
-  // === LISTE DELLA SPESA ===
   app.get("/api/lists", isAuthenticated, async (req, res, next) => {
     try {
       const userId = (req.user as User).id;
@@ -227,7 +233,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // === PRODOTTI (SPECIFICI PER LISTA) ===
   app.get("/api/lists/:listId/items", isAuthenticated, isListMember, async (req, res, next) => {
     try {
       const listId = parseInt(req.params.listId, 10);
@@ -249,6 +254,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(201).json(newItem);
     } catch (error) {
       next(error);
+    }
+  });
+
+  app.post("/api/lists/:listId/invitations", isAuthenticated, isListOwner, async (req, res, next) => {
+    try {
+        const listId = parseInt(req.params.listId, 10);
+        const inviter = req.user as User;
+        const { email: inviteeEmail } = req.body;
+
+        if (!inviteeEmail) {
+            return res.status(400).json({ message: "L'email dell'invitato e' richiesta." });
+        }
+        
+        const [list] = await db.select().from(shoppingLists).where(eq(shoppingLists.id, listId)).limit(1);
+        if(!list) return res.status(404).json({message: "Lista non trovata"});
+
+        const token = crypto.randomBytes(32).toString('hex');
+        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000 * 7); // Scadenza tra 7 giorni
+
+        await storage.createInvitation(listId, inviter.id, inviteeEmail, token, expiresAt);
+        await sendListInvitationEmail(inviteeEmail, inviter, list, token);
+
+        res.status(200).json({ message: "Invito inviato con successo." });
+    } catch (error) {
+        next(error);
+    }
+  });
+
+  app.post("/api/invitations/accept", isAuthenticated, async (req, res, next) => {
+    try {
+        const { token } = req.body;
+        const user = req.user as User;
+
+        if (!token) {
+            return res.status(400).json({ message: "Token mancante." });
+        }
+
+        const invitation = await storage.findInvitationByToken(token);
+
+        if (!invitation) {
+            return res.status(404).json({ message: "Invito non valido, scaduto o gia' utilizzato." });
+        }
+        
+        if (invitation.inviteeEmail.toLowerCase() !== user.email.toLowerCase()) {
+            return res.status(403).json({ message: "Questo invito e' destinato a un altro utente." });
+        }
+
+        await storage.addListMember(invitation.listId, user.id, 'editor');
+        await storage.updateInvitationStatus(invitation.id, 'accepted');
+
+        res.json({ message: "Invito accettato! La lista e' stata aggiunta al tuo account." });
+    } catch (error) {
+        next(error);
     }
   });
   
@@ -290,7 +348,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // === GEOLOCALIZZAZIONE E LAYOUT NEGOZI ===
   app.post("/api/check-in", isAuthenticated, async (req, res, next) => {
     try {
         const { latitude, longitude } = req.body;
@@ -330,7 +387,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
-  // === STORICO ACQUISTI ===
   app.get("/api/lists/:listId/history", isAuthenticated, isListMember, async (req, res, next) => {
     try {
         const listId = parseInt(req.params.listId, 10);
@@ -341,7 +397,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
-  // === SUGGERIMENTI ===
   app.get("/api/suggestions", isAuthenticated, async (req, res, next) => {
     try {
         const userId = (req.user as User).id;
@@ -377,7 +432,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
         const suggestionId = parseInt(req.params.suggestionId, 10);
         const { listId } = req.body;
-        if (!listId) return res.status(400).json({ message: "listId Ã¨ richiesto." });
+        if (!listId) return res.status(400).json({ message: "listId e' richiesto." });
         const userId = (req.user as User).id;
         const isMember = await storage.isUserMemberOfList(userId, listId);
         if (!isMember) return res.status(403).json({ message: "Non puoi aggiungere item a questa lista." });
@@ -393,7 +448,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // === AI SHOPPING LIST ===
   app.post("/api/ai-suggestions", isAuthenticated, async (req, res, next) => {
     try {
       const { requirement } = req.body;
@@ -405,7 +459,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // === ROTTE PUBBLICHE ===
   app.get("/api/add-by-url", async (req, res, next) => {
     try {
       const productName = req.query.product as string;
@@ -420,7 +473,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // === ROTTE E-COMMERCE E ALTRO ===
   app.post("/api/ecommerce/match", isAuthenticated, async (req, res, next) => {
     try {
       const userId = (req.user as User).id;
@@ -490,7 +542,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = (req.user as User).id;
       const { platform = "carrefour", selectedProducts } = req.body;
       if (!selectedProducts || typeof selectedProducts !== 'object' || Object.keys(selectedProducts).length === 0) {
-        return res.status(400).json({ message: "L'oggetto 'selectedProducts' Ã¨ richiesto e non puÃ² essere vuoto." });
+        return res.status(400).json({ message: "L'oggetto 'selectedProducts' e' richiesto e non puo' essere vuoto." });
       }
       const matches = await storage.getEcommerceMatchesByUserId(userId, platform);
       const cartItems = Object.entries(selectedProducts).map(([itemName, selection]: [string, any]) => {
@@ -520,7 +572,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // === ROTTE ADMIN ===
   app.get("/api/database/stats", async (req, res, next) => {
     try {
       const { advancedMatcher } = await import('./services/advanced-matching.js');
