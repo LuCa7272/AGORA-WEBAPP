@@ -18,28 +18,31 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertTriangle, UserPlus, Mail, Lock, CheckCircle } from "lucide-react";
+import { AlertTriangle, User, UserPlus, Mail, Lock, CheckCircle } from "lucide-react"; // Aggiunta icona User
 
 export default function RegisterPage() {
-  const { register, authSchema } = useAuth();
+  // --- MODIFICA INIZIA QUI ---
+  const { register, registerSchema } = useAuth(); // Usiamo il nuovo schema
   const [isSuccess, setIsSuccess] = useState(false);
 
-  type RegisterFormValues = z.infer<typeof authSchema>;
+  type RegisterFormValues = z.infer<typeof registerSchema>;
 
   const form = useForm<RegisterFormValues>({
-    resolver: zodResolver(authSchema),
+    resolver: zodResolver(registerSchema),
     defaultValues: {
       email: "",
       password: "",
+      nickname: "", // Aggiungiamo il valore di default per il nuovo campo
     },
   });
+  // --- FINE MODIFICA ---
 
   const onSubmit = async (data: RegisterFormValues) => {
     try {
       await register(data);
       setIsSuccess(true); // Mostra il messaggio di successo
     } catch (error: any) {
-      const errorMessage = error.message || "Si è verificato un errore inaspettato.";
+      const errorMessage = error.message || "Si Ã¨ verificato un errore inaspettato.";
       form.setError("root", { message: errorMessage });
       console.error("Registration error:", error);
     }
@@ -91,6 +94,29 @@ export default function RegisterPage() {
                   </AlertDescription>
                 </Alert>
               )}
+
+              {/* --- MODIFICA INIZIA QUI: NUOVO CAMPO NICKNAME --- */}
+              <FormField
+                control={form.control}
+                name="nickname"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="md3-body-large">Nickname (opzionale)</FormLabel>
+                    <FormControl>
+                       <div className="relative flex items-center">
+                        <User className="absolute left-3 h-5 w-5 text-[color:var(--md-sys-color-on-surface-variant)]" />
+                        <Input
+                          placeholder="Il tuo nome (max 8 lettere)"
+                          className="pl-10 h-14 md3-body-large rounded-xl"
+                          {...field}
+                        />
+                      </div>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              {/* --- FINE MODIFICA --- */}
 
               <FormField
                 control={form.control}
@@ -155,7 +181,7 @@ export default function RegisterPage() {
 
         <div className="text-center mt-6">
           <p className="md3-body-large">
-            Hai già un account?{" "}
+            Hai giÃ  un account?{" "}
             <Link
               href="/login"
               className="font-semibold text-[color:var(--md-sys-color-primary)] hover:underline"

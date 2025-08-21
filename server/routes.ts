@@ -1,4 +1,4 @@
-// FILE: server/routes.ts (VERSIONE ASSOLUTAMENTE COMPLETA)
+// FILE: server/routes.ts (VERSIONE VERAMENTE COMPLETA E CORRETTA)
 
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
@@ -8,37 +8,32 @@ import {
   insertPurchaseHistorySchema,
   insertSuggestionSchema,
   insertEcommerceMatchSchema,
-  shoppingItems // Importato per il nuovo middleware
+  shoppingItems
 } from "@shared/schema";
 import { advancedMatcher } from './services/advanced-matching.js';
 import { generateSmartSuggestions, matchProductsToEcommerce, categorizeItem, generateAIShoppingList } from "./services/ai-provider";
 import { generateCartXML, createEcommerceCart, generateCarrefourUrl, generateEsselungaUrl } from "./services/ecommerce";
-// --- MODIFICA 1/5: IMPORTIAMO IL NUOVO SERVIZIO DI GEOLOCALIZZAZIONE ---
 import { geolocationService } from './services/geolocationService.js';
-
-// ===== NUOVI IMPORT PER L'AUTENTICAZIONE =====
 import session from "express-session";
 import bcrypt from "bcrypt";
 import passport from "./auth";
-import { users, type User, type PurchaseHistory, type ShoppingItem } from "@shared/schema"; // Aggiunto ShoppingItem
+import { users, type User, type PurchaseHistory, type ShoppingItem } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { db } from './db';
 import crypto from 'crypto';
 import { sendVerificationEmail } from './services/email';
 
-// Middleware per verificare se l'utente è autenticato e verificato
 const isAuthenticated = (req: Request, res: Response, next: NextFunction) => {
   const user = req.user as User;
   if (req.isAuthenticated() && user.isEmailVerified) {
     return next();
   }
   if (req.isAuthenticated() && !user.isEmailVerified) {
-    return res.status(403).json({ message: "Accesso negato. L'email non è stata verificata." });
+    return res.status(403).json({ message: "Accesso negato. L'email non Ã¨ stata verificata." });
   }
   res.status(401).json({ message: "Accesso non autorizzato. Effettua il login." });
 };
 
-// Middleware per verificare che l'utente sia membro della lista richiesta
 const isListMember = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const listIdParam = req.params.listId || req.body.listId;
@@ -58,12 +53,6 @@ const isListMember = async (req: Request, res: Response, next: NextFunction) => 
   }
 };
 
-// --- MODIFICA 2/5: NUOVO MIDDLEWARE PER CONTROLLARE I PERMESSI SU UN ITEM SPECIFICO ---
-/**
- * Middleware per verificare che l'utente autenticato abbia i permessi per agire
- * su un determinato prodotto (verificando che sia membro della lista a cui il prodotto appartiene).
- * Aggiunge l'oggetto 'item' al request object per un uso successivo.
- */
 const isItemOwner = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const itemId = parseInt(req.params.itemId, 10);
@@ -79,7 +68,6 @@ const isItemOwner = async (req: Request, res: Response, next: NextFunction) => {
 
     const isMember = await storage.isUserMemberOfList(userId, item.listId);
     if (isMember) {
-      // Aggiungiamo l'item al request object per non doverlo recuperare di nuovo
       (req as any).item = item;
       return next();
     }
@@ -88,16 +76,12 @@ const isItemOwner = async (req: Request, res: Response, next: NextFunction) => {
     next(error);
   }
 };
-// --- FINE MODIFICA 2/5 ---
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  console.log("--- Il file server/routes.ts Ã¨ stato caricato e le rotte vengono registrate ---");
+  console.log("--- Il file server/routes.ts ÃƒÂ¨ stato caricato e le rotte vengono registrate ---");
 
-  // =================================================================
-  // CONFIGURAZIONE SESSIONI E PASSPORT
-  // =================================================================
   if (!process.env.SESSION_SECRET) {
-    throw new Error("SESSION_SECRET non Ã¨ definita nel file .env.");
+    throw new Error("SESSION_SECRET non ÃƒÂ¨ definita nel file .env.");
   }
   app.use(
     session({
@@ -115,32 +99,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // =================================================================
   app.post("/api/auth/register", async (req, res, next) => {
     try {
-      const { email, password } = req.body;
+      const { email, password, nickname } = req.body;
       if (!email || !password) {
         return res.status(400).json({ message: "Email e password sono obbligatori." });
       }
-
+      if (nickname && nickname.length > 8) {
+        return res.status(400).json({ message: "Il nickname non può superare gli 8 caratteri." });
+      }
       const existingUser = await db.select().from(users).where(eq(users.email, email.toLowerCase())).limit(1);
       if (existingUser.length > 0) {
-        return res.status(409).json({ message: "Un utente con questa email esiste giÃ ." });
+        return res.status(409).json({ message: "Un utente con questa email esiste giÃƒÂ ." });
       }
-
       const hashedPassword = await bcrypt.hash(password, 10);
-
       const verificationToken = crypto.randomBytes(32).toString('hex');
-      const tokenExpires = new Date(Date.now() + 3600000); // 1 ora
-
+      const tokenExpires = new Date(Date.now() + 3600000);
       const [newUser] = await db.insert(users).values({
         email: email.toLowerCase(),
         hashedPassword: hashedPassword,
+        nickname: nickname || null,
         provider: 'local',
         emailVerificationToken: verificationToken,
         emailVerificationTokenExpires: tokenExpires,
-      }).returning({ id: users.id, email: users.email });
-
+      }).returning({ id: users.id, email: users.email, nickname: users.nickname });
       await storage.createDefaultListForUser(newUser.id);
       await sendVerificationEmail(newUser.email, verificationToken);
-
       res.status(201).json({
         message: "Registrazione quasi completata. Controlla la tua email per il link di verifica.",
         user: newUser
@@ -159,7 +141,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const result = await db.select().from(users).where(eq(users.emailVerificationToken, token)).limit(1);
       const user = result[0];
       if (!user) {
-        return res.status(404).send("<h1>Errore: Token non valido o giÃ  utilizzato.</h1>");
+        return res.status(404).send("<h1>Errore: Token non valido o giÃƒÂ  utilizzato.</h1>");
       }
       if (user.emailVerificationTokenExpires && new Date() > new Date(user.emailVerificationTokenExpires)) {
         return res.status(400).send("<h1>Errore: Token di verifica scaduto.</h1>");
@@ -171,11 +153,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           emailVerificationTokenExpires: null
         })
         .where(eq(users.id, user.id));
-      console.log(`âœ… Email verificata con successo per l'utente: ${user.email}`);
+      console.log(`Ã¢Å“â€¦ Email verificata con successo per l'utente: ${user.email}`);
       res.send(`
         <div style="font-family: sans-serif; text-align: center; padding: 40px;">
-          <h1>âœ… Email Verificata con Successo!</h1>
-          <p>Il tuo account Ã¨ stato attivato. Ora puoi tornare all'applicazione ed effettuare il login.</p>
+          <h1>Ã¢Å“â€¦ Email Verificata con Successo!</h1>
+          <p>Il tuo account ÃƒÂ¨ stato attivato. Ora puoi tornare all'applicazione ed effettuare il login.</p>
           <a href="/login" style="display: inline-block; margin-top: 20px; padding: 10px 20px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px;">
             Vai al Login
           </a>
@@ -213,6 +195,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ROTTE PROTETTE
   // =================================================================
 
+  // === ROTTA MODIFICA NICKNAME ===
+  app.put("/api/user/nickname", isAuthenticated, async (req, res, next) => {
+    try {
+        const { nickname } = req.body;
+        const userId = (req.user as User).id;
+
+        // Validazione
+        if (!nickname || nickname.length > 8 || nickname.length < 3) {
+            return res.status(400).json({ message: "Il nickname deve avere tra 3 e 8 caratteri." });
+        }
+        
+        // Aggiorna il DB
+        await db.update(users).set({ nickname: nickname }).where(eq(users.id, userId));
+
+        res.json({ success: true, message: "Nickname aggiornato con successo." });
+
+    } catch (error) {
+        next(error);
+    }
+  });
+
   // === LISTE DELLA SPESA ===
   app.get("/api/lists", isAuthenticated, async (req, res, next) => {
     try {
@@ -248,21 +251,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       next(error);
     }
   });
-
-  // --- MODIFICA 3/5: AGGIORNIAMO L'ENDPOINT DI ACQUISTO CON IL NUOVO MIDDLEWARE E LOGICA ---
+  
   app.post("/api/items/:itemId/purchase", isAuthenticated, isItemOwner, async (req, res, next) => {
     try {
         const itemId = parseInt(req.params.itemId, 10);
-        // Recuperiamo l'item dal middleware per evitare una query extra
         const item = (req as any).item as ShoppingItem; 
         const userId = (req.user as User).id;
-        
-        // Il corpo della richiesta ora può contenere lo storeId
         const { storeId } = req.body;
-
-        // Passiamo i dati necessari a `markItemAsPurchased`
         await storage.markItemAsPurchased(itemId, userId, storeId);
-        
         res.json({ success: true, message: `"${item.name}" acquistato.` });
     } catch (error) {
         next(error);
@@ -278,9 +274,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         next(error);
     }
   });
-  // --- FINE MODIFICA 3/5 ---
-
-  // --- MODIFICA 4/5: ROTTA PER LA RICERCA TRAMITE EAN (DAL PASSO PRECEDENTE, CONFERMATA) ---
+  
   app.get("/api/products/by-ean/:ean", isAuthenticated, async (req, res, next) => {
     try {
       const { ean } = req.params;
@@ -295,24 +289,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       next(error);
     }
   });
-  // --- FINE MODIFICA 4/5 ---
 
-
-  // --- MODIFICA 5/5: NUOVE ROTTE PER GEOLOCALIZZAZIONE E LAYOUT ---
-  // =================================================================
-  // GEOLOCALIZZAZIONE E LAYOUT NEGOZI
-  // =================================================================
-  
+  // === GEOLOCALIZZAZIONE E LAYOUT NEGOZI ===
   app.post("/api/check-in", isAuthenticated, async (req, res, next) => {
     try {
         const { latitude, longitude } = req.body;
         if (latitude === undefined || longitude === undefined) {
             return res.status(400).json({ message: "Latitudine e longitudine sono richieste." });
         }
-
         const nearbyPlaces = await geolocationService.findNearbySupermarkets(latitude, longitude);
-        
-        // Per ogni luogo trovato, controlla se esiste già nel nostro DB, altrimenti crealo.
         const storesInDb = await Promise.all(
             nearbyPlaces.map(async (place) => {
                 let store = await storage.findStoreByExternalId(place.externalId);
@@ -322,7 +307,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 return store;
             })
         );
-        
         res.json(storesInDb);
     } catch (error) {
         next(error);
@@ -336,9 +320,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             return res.status(400).json({ message: "ID del negozio non valido." });
         }
         const layout = await storage.getStoreLayout(storeId);
-        
         if (layout && layout.categoryOrder) {
-            // Drizzle con SQLite memorizza JSON come stringhe, quindi dobbiamo fare il parse.
             res.json({ categoryOrder: JSON.parse(layout.categoryOrder as string) });
         } else {
             res.json({ categoryOrder: [] });
@@ -347,8 +329,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         next(error);
     }
   });
-  // --- FINE MODIFICA 5/5 ---
-  
   
   // === STORICO ACQUISTI ===
   app.get("/api/lists/:listId/history", isAuthenticated, isListMember, async (req, res, next) => {
@@ -377,16 +357,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const userId = (req.user as User).id;
         const userLists = await storage.getListsForUser(userId);
         if(userLists.length === 0) return res.json([]);
-
         let fullHistory: PurchaseHistory[] = [];
         for(const list of userLists) {
             const history = await storage.getPurchaseHistoryByListId(list.id);
             fullHistory.push(...history);
         }
-
-        const itemStatsForAI: any[] = []; // La logica di aggregazione andrà qui
+        const itemStatsForAI: any[] = [];
         const aiSuggestions = await generateSmartSuggestions(itemStatsForAI);
-        
         const createdSuggestions = await Promise.all(
             aiSuggestions.map(suggestion => storage.createSuggestion({ userId, ...suggestion, category: suggestion.category || 'Altri' }))
         );
@@ -400,13 +377,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
         const suggestionId = parseInt(req.params.suggestionId, 10);
         const { listId } = req.body;
-        if (!listId) return res.status(400).json({ message: "listId è richiesto." });
+        if (!listId) return res.status(400).json({ message: "listId Ã¨ richiesto." });
         const userId = (req.user as User).id;
         const isMember = await storage.isUserMemberOfList(userId, listId);
         if (!isMember) return res.status(403).json({ message: "Non puoi aggiungere item a questa lista." });
-        
         const suggestion = await storage.updateSuggestion(suggestionId, { isAccepted: true });
-        
         await storage.createShoppingItem({
             listId: listId,
             name: suggestion.itemName,
@@ -451,7 +426,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = (req.user as User).id;
       const { items, platform = "carrefour", expandSearch = false } = req.body;
       if (!Array.isArray(items)) return res.status(400).json({ message: "Items array is required" });
-      
       let skip = 0;
       if (expandSearch) {
         const itemName = items[0];
@@ -462,7 +436,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await storage.clearEcommerceMatches(platform, userId);
       }
       const matches = await matchProductsToEcommerce(items, platform, skip);
-      
       const createdMatches = await Promise.all(
         matches.map(match => storage.createEcommerceMatch({ ...match, userId }))
       );
@@ -499,11 +472,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = (req.user as User).id;
       const { items, platform = "carrefour" } = req.body;
       if (!Array.isArray(items)) return res.status(400).json({ message: "Items array is required" });
-      
       const matches = await storage.getEcommerceMatchesByUserId(userId, platform);
       const cart = createEcommerceCart(items, matches, platform);
       const xml = generateCartXML(cart);
-      
       res.set({
         'Content-Type': 'application/xml',
         'Content-Disposition': `attachment; filename="smartcart-${platform}-${new Date().toISOString().split('T')[0]}.xml"`
@@ -518,13 +489,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userId = (req.user as User).id;
       const { platform = "carrefour", selectedProducts } = req.body;
-      
       if (!selectedProducts || typeof selectedProducts !== 'object' || Object.keys(selectedProducts).length === 0) {
-        return res.status(400).json({ message: "L'oggetto 'selectedProducts' è richiesto e non può essere vuoto." });
+        return res.status(400).json({ message: "L'oggetto 'selectedProducts' Ã¨ richiesto e non puÃ² essere vuoto." });
       }
-      
       const matches = await storage.getEcommerceMatchesByUserId(userId, platform);
-      
       const cartItems = Object.entries(selectedProducts).map(([itemName, selection]: [string, any]) => {
         const match = matches.find(m => m.productId === selection.productId);
         return {
@@ -535,14 +503,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           category: match?.category
         };
       });
-
       if (cartItems.length === 0) {
           return res.status(400).json({ message: "Nessun prodotto valido trovato per creare il carrello." });
       }
-      
       const estimatedTotal = cartItems.reduce((sum, item) => sum + (item.price || 0) * item.quantity, 0);
       const cart = { platform, items: cartItems, totalItems: cartItems.length, estimatedTotal };
-      
       let url = "";
       switch (platform) {
         case "carrefour": url = generateCarrefourUrl(cart); break;
@@ -555,7 +520,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ROTTE ADMIN
+  // === ROTTE ADMIN ===
   app.get("/api/database/stats", async (req, res, next) => {
     try {
       const { advancedMatcher } = await import('./services/advanced-matching.js');

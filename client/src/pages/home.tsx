@@ -1,11 +1,10 @@
-// FILE: client/pages/home.tsx (VERSIONE COMPLETA CON LOGICA DI GEOLOCALIZZAZIONE)
+// FILE: client/pages/home.tsx (VERSIONE FINALE CORRETTA E ROBUSTA)
 
 import { useState, useEffect } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { 
   FileText, History, Brain, Zap, ShoppingBasket, ShoppingCart, Settings, Plus, LogOut, Loader2,
-  // --- MODIFICA 1/7: IMPORT NUOVE ICONE ---
-  MapPin, Store as StoreIcon
+  MapPin, Store as StoreIcon, Edit
 } from "lucide-react";
 import { Link } from "wouter";
 import ModeToggle from "@/components/mode-toggle";
@@ -15,9 +14,9 @@ import PurchaseHistory from "@/components/purchase-history";
 import SmartSuggestions from "@/components/smart-suggestions";
 import ProductMatching from "@/components/product-matching";
 import { ShoppingCartView } from "@/components/shopping-cart";
+import { UpdateNicknameDialog } from "@/components/update-nickname-dialog";
 
 import { useAuth } from "@/hooks/use-auth";
-// --- MODIFICA 2/7: IMPORT NUOVI TIPI ---
 import type { ShoppingList as ShoppingListType, Store } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,7 +26,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-// --- MODIFICA 3/7: IMPORT COMPONENTE DIALOG ---
 import {
   Dialog,
   DialogContent,
@@ -37,28 +35,30 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { processOfflineQueue, getOfflineQueue } from "@/lib/offline-queue";
+import { Badge } from "@/components/ui/badge";
 
-// Coordinate di test per lo sviluppo (Supermercato a Milano)
 const MOCK_COORDINATES = {
   latitude: 45.4582,
   longitude: 9.1633,
 };
 
 export default function Home() {
-  const { user, logout } = useAuth();
+  const { user, logout, isAuthenticated, isLoading: isAuthLoading } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<"lista" | "storico" | "suggerimenti" | "matching" | "carrello">("lista");
   const [isMarketMode, setIsMarketMode] = useState(false);
   const [activeListId, setActiveListId] = useState<number | null>(null);
+  const [pendingSyncs, setPendingSyncs] = useState(0);
 
-  // --- MODIFICA 4/7: STATI PER LA NUOVA FUNZIONALITÀ ---
   const [activeStore, setActiveStore] = useState<Store | null>(null);
   const [nearbyStores, setNearbyStores] = useState<Store[]>([]);
   const [isStoreSelectorOpen, setIsStoreSelectorOpen] = useState(false);
   const [isCheckingIn, setIsCheckingIn] = useState(false);
   const [categoryOrder, setCategoryOrder] = useState<string[]>([]);
-  // --- FINE MODIFICA 4/7 ---
+  
+  const [isNicknameDialogOpen, setIsNicknameDialogOpen] = useState(false);
 
   const { data: lists, isLoading: isLoadingLists } = useQuery<ShoppingListType[]>({
     queryKey: ["lists"],
@@ -75,17 +75,52 @@ export default function Home() {
       setActiveListId(lists[0].id);
     }
   }, [lists, activeListId]);
+  
+  useEffect(() => {
+    const trySync = async () => {
+      if (isAuthLoading || !isAuthenticated) {
+        console.log("[Sync] In attesa di autenticazione prima di sincronizzare...");
+        return;
+      }
+
+      if (!navigator.onLine) {
+        console.log("[Sync] Offline, sincronizzazione rimandata.");
+        setPendingSyncs(getOfflineQueue().length);
+        return;
+      }
+      
+      const result = await processOfflineQueue();
+      if (result.success > 0) {
+        toast({
+          title: "Sincronizzazione completata!",
+          description: `${result.success} azioni offline sono state salvate.`,
+        });
+        queryClient.invalidateQueries({ queryKey: ["shoppingItems", activeListId] });
+        queryClient.invalidateQueries({ queryKey: ["history", activeListId] });
+      }
+      setPendingSyncs(getOfflineQueue().length);
+    };
+
+    trySync();
+
+    window.addEventListener('online', trySync);
+    window.addEventListener('offline', () => setPendingSyncs(getOfflineQueue().length));
+
+    return () => {
+      window.removeEventListener('online', trySync);
+      window.removeEventListener('offline', () => setPendingSyncs(getOfflineQueue().length));
+    };
+  }, [activeListId, queryClient, toast, isAuthenticated, isAuthLoading]);
 
   const handleLogout = async () => {
     await logout();
     toast({ title: "Logout effettuato con successo." });
   };
   
-  // --- MODIFICA 5/7: LOGICA PER LA GEOLOCALIZZAZIONE E IL CHECK-IN ---
   const getRealGpsPosition = (): Promise<GeolocationCoordinates> => {
     return new Promise((resolve, reject) => {
       if (!navigator.geolocation) {
-        return reject(new Error("La geolocalizzazione non è supportata da questo browser."));
+        return reject(new Error("La geolocalizzazione non è supportata dal browser."));
       }
       navigator.geolocation.getCurrentPosition(
         (position) => resolve(position.coords),
@@ -102,12 +137,11 @@ export default function Home() {
       let coords: { latitude: number, longitude: number };
       
       const realCoords = await getRealGpsPosition();
-      console.log("Posizione GPS reale ottenuta:", realCoords);
       coords = realCoords;
 
       if (import.meta.env.DEV) {
         console.warn("DEV MODE: Sovrascrivo le coordinate GPS con quelle di test.");
-        toast({ title: "Modalità Sviluppo", description: "Utilizzo coordinate di test." });
+        toast({ title: "Modalità  Sviluppo", description: "Utilizzo coordinate di test." });
         coords = MOCK_COORDINATES;
       }
 
@@ -116,19 +150,16 @@ export default function Home() {
         longitude: coords.longitude,
       });
       const foundStores: Store[] = await res.json();
-      console.log("Negozi trovati dal backend:", foundStores);
 
       if (foundStores.length === 0) {
         toast({
-          variant: "destructive",
-          title: "Nessun negozio trovato",
-          description: "Non abbiamo trovato supermercati registrati nelle vicinanze.",
+          title: "Nessun negozio trovato nelle vicinanze",
+          description: "Modalità  Market attivata senza ordinamento. Gli acquisti non saranno salvati nelle statistiche.",
+          duration: 5000,
         });
-        setIsMarketMode(false); // Annulla l'ingresso in market mode
-        return;
-      }
-      
-      if (foundStores.length === 1) {
+        setActiveStore(null);
+        setCategoryOrder([]);
+      } else if (foundStores.length === 1) {
         await handleStoreSelect(foundStores[0]);
       } else {
         setNearbyStores(foundStores);
@@ -170,18 +201,35 @@ export default function Home() {
   };
 
   const handleToggleMode = (newMode: boolean) => {
-    // Non facciamo nulla se stiamo già facendo il check-in per evitare doppie chiamate
     if (isCheckingIn) return;
 
+// --- MODIFICA CHIAVE INIZIA QUI ---
+
+    // 1. Aggiorna lo stato della UI immediatamente.
+    // Questo fa sì che l'app entri in Market Mode anche offline.
     setIsMarketMode(newMode);
+
     if (newMode) {
-      handleCheckIn();
+      // 2. Controlla la connessione PRIMA di tentare il check-in.
+      if (navigator.onLine) {
+        // Se siamo online, procedi con il check-in per ottimizzare la lista.
+        handleCheckIn();
+      } else {
+        // Se siamo offline, informa l'utente e attiva la modalità generica.
+        toast({
+          title: "Modalità Market Offline",
+          description: "La lista non può essere ottimizzata. Verrà usata la categorizzazione standard.",
+        });
+        setActiveStore(null);
+        setCategoryOrder([]);
+      }
     } else {
+      // Quando si esce dalla modalità market, resetta sempre lo stato.
       setActiveStore(null);
       setCategoryOrder([]);
     }
+    // --- MODIFICA CHIAVE FINISCE QUI ---
   };
-  // --- FINE MODIFICA 5/7 ---
 
   const tabs = [
     { id: "lista", label: "Lista", icon: FileText },
@@ -199,8 +247,16 @@ export default function Home() {
     }
   };
 
+  const getUserDisplayName = () => {
+      if (!user) return "";
+      if (user.nickname && user.nickname.trim() !== "") {
+          return user.nickname;
+      }
+      return user.email.split('@')[0];
+  };
+
   const renderContent = () => {
-    if (isLoadingLists) {
+    if (isLoadingLists || isAuthLoading) { 
       return (
         <div className="flex justify-center items-center p-8">
             <Loader2 className="h-8 w-8 animate-spin" />
@@ -223,14 +279,12 @@ export default function Home() {
         return (
           <>
             <AddItemForm isMarketMode={isMarketMode} activeListId={activeListId} />
-            {/* --- MODIFICA 6/7: PASSAGGIO NUOVE PROPS --- */}
             <ShoppingList
               isMarketMode={isMarketMode}
               activeListId={activeListId}
               activeStoreId={activeStore?.id ?? null}
               categoryOrder={categoryOrder}
             />
-            {/* --- FINE MODIFICA 6/7 --- */}
           </>
         );
       case "storico":
@@ -256,9 +310,23 @@ export default function Home() {
                   <div className="w-10 h-10 md3-primary-container rounded-2xl flex items-center justify-center md3-elevation-1 flex-shrink-0">
                       <ShoppingCart className="w-5 h-5" />
                   </div>
-                  <div className="truncate">
-                      <p className="md3-label-medium text-[color:var(--md-sys-color-on-surface-variant)]">Ciao,</p>
-                      <p className="md3-body-large font-bold truncate">{user?.email}</p>
+                  <div className="flex items-center gap-1 truncate">
+                    <div className="truncate">
+                        <p className="md3-label-medium text-[color:var(--md-sys-color-on-surface-variant)]">Ciao,</p>
+                        <p className="md3-body-large font-bold truncate">
+                          {getUserDisplayName()}
+                        </p>
+                    </div>
+                    {/* --- FIX: Aggiunto controllo `user &&` per il pulsante --- */}
+                    {user && (
+                      <button 
+                        onClick={() => setIsNicknameDialogOpen(true)} 
+                        className="p-1 rounded-full text-[color:var(--md-sys-color-on-surface-variant)] hover:bg-black/10 flex-shrink-0"
+                        title="Modifica nickname"
+                      >
+                        <Edit className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
               </div>
               <div className="flex items-center space-x-1 flex-shrink-0">
@@ -272,6 +340,13 @@ export default function Home() {
                   </Link>
               </div>
             </div>
+            {pendingSyncs > 0 && (
+                <div className="flex items-center justify-center">
+                    <Badge variant="destructive">
+                        {pendingSyncs} azioni in attesa di sincronizzazione
+                    </Badge>
+                </div>
+            )}
             <div className="flex items-center justify-between">
                <div className="flex-1 mr-2">
                   {lists && lists.length > 0 && activeListId && (
@@ -294,10 +369,16 @@ export default function Home() {
                </div>
                <ModeToggle isMarketMode={isMarketMode} onToggle={handleToggleMode} />
             </div>
-            {isMarketMode && activeStore && (
+            {isMarketMode && (
                 <div className="flex items-center justify-center gap-2 text-sm text-[color:var(--md-sys-color-on-tertiary-container)] bg-black/10 px-3 py-1 rounded-full animate-in fade-in duration-500">
-                    <StoreIcon size={14} />
-                    <span>{activeStore.name}</span>
+                    {activeStore ? (
+                        <>
+                            <StoreIcon size={14} />
+                            <span>{activeStore.name}</span>
+                        </>
+                    ) : (
+                        <span>ModalitÃ  Market Generica</span>
+                    )}
                 </div>
             )}
           </div>
@@ -340,8 +421,16 @@ export default function Home() {
           </div>
         )}
       </div>
-
-      {/* --- MODIFICA 7/7: MODALE PER LA SELEZIONE DEL NEGOZIO --- */}
+      
+      {/* --- FIX: Renderizza il dialogo solo se c'Ã¨ un utente --- */}
+      {user && (
+        <UpdateNicknameDialog 
+          user={user} 
+          open={isNicknameDialogOpen} 
+          onOpenChange={setIsNicknameDialogOpen} 
+        />
+      )}
+      
       <Dialog open={isStoreSelectorOpen} onOpenChange={setIsStoreSelectorOpen}>
         <DialogContent>
           <DialogHeader>
@@ -369,12 +458,12 @@ export default function Home() {
             ))}
              <Button variant="ghost" onClick={() => {
                 setIsStoreSelectorOpen(false);
-                setIsMarketMode(false); // Annulla l'ingresso in market mode se l'utente chiude
-             }}>Annulla</Button>
+                setActiveStore(null);
+                setCategoryOrder([]);
+             }}>Nessuno di questi / Continua senza negozio</Button>
           </div>
         </DialogContent>
       </Dialog>
-      {/* --- FINE MODIFICA 7/7 --- */}
     </>
   );
 }

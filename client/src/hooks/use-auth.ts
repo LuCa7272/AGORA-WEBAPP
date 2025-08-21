@@ -5,13 +5,26 @@ import { apiRequest } from "@/lib/queryClient";
 import type { User } from "@shared/schema";
 import { z } from "zod";
 
-// Schema di validazione per i dati di login/registrazione
+// --- MODIFICA INIZIA QUI ---
+
+// Schema base per il login (invariato)
 const authSchema = z.object({
   email: z.string().email("Email non valida."),
   password: z.string().min(8, "La password deve essere di almeno 8 caratteri."),
 });
 
+// Nuovo schema esteso per la registrazione
+const registerSchema = authSchema.extend({
+    // Rendiamo il nickname opzionale con `.optional()` ma applichiamo le validazioni se viene fornito.
+    nickname: z.string()
+        .max(8, "Il nickname non può superare gli 8 caratteri.")
+        .optional(),
+});
+
 type AuthInput = z.infer<typeof authSchema>;
+type RegisterInput = z.infer<typeof registerSchema>; // Nuovo tipo per la registrazione
+
+// --- FINE MODIFICA ---
 
 // Funzione per ottenere i dati dell'utente corrente
 async function fetchCurrentUser(): Promise<User | null> {
@@ -20,7 +33,7 @@ async function fetchCurrentUser(): Promise<User | null> {
     const data = await response.json();
     return data.user || null;
   } catch (error) {
-    // Se la richiesta fallisce (es. 401), significa che l'utente non è loggato
+    // Se la richiesta fallisce (es. 401), significa che l'utente non Ã¨ loggato
     return null;
   }
 }
@@ -29,7 +42,7 @@ export function useAuth() {
   const queryClient = useQueryClient();
 
   // useQuery per ottenere e mantenere in cache i dati dell'utente.
-  // La chiave 'currentUser' è usata per identificare questa query in tutta l'app.
+  // La chiave 'currentUser' Ã¨ usata per identificare questa query in tutta l'app.
   const { data: user, isLoading, isError } = useQuery({
     queryKey: ["currentUser"],
     queryFn: fetchCurrentUser,
@@ -51,10 +64,12 @@ export function useAuth() {
 
   // useMutation per la funzione di registrazione
   const registerMutation = useMutation({
-    mutationFn: async (credentials: AuthInput) => {
+    // --- MODIFICA INIZIA QUI ---
+    mutationFn: async (credentials: RegisterInput) => {
       const response = await apiRequest("POST", "/api/auth/register", credentials);
       return response.json();
     },
+    // --- FINE MODIFICA ---
   });
 
   // useMutation per la funzione di logout
@@ -64,7 +79,7 @@ export function useAuth() {
     },
     onSuccess: () => {
       // Dopo il logout, aggiorna direttamente la cache di 'currentUser' a null
-      // per una reattività istantanea, e poi invalida per essere sicuri.
+      // per una reattivitÃ  istantanea, e poi invalida per essere sicuri.
       queryClient.setQueryData(["currentUser"], null);
       queryClient.invalidateQueries({ queryKey: ["currentUser"] });
     },
@@ -89,7 +104,10 @@ export function useAuth() {
     isLoggingOut: logoutMutation.isPending,
     logoutError: logoutMutation.error,
 
-    // Schema per i form
+    // --- MODIFICA INIZIA QUI ---
+    // Esponiamo entrambi gli schemi per i form
     authSchema,
+    registerSchema,
+    // --- FINE MODIFICA ---
   };
 }

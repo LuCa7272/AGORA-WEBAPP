@@ -1,4 +1,4 @@
-// FILE: shared/schema.ts (VERSIONE COMPLETA CON MODIFICHE)
+// FILE: shared/schema.ts (VERSIONE COMPLETA E CORRETTA)
 
 import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
 import { createInsertSchema } from "drizzle-zod";
@@ -11,6 +11,9 @@ import { z } from "zod";
 export const users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   email: text("email").notNull().unique(),
+  // --- MODIFICA INIZIA QUI ---
+  nickname: text("nickname"), // Semplice campo di testo, non unico.
+  // --- MODIFICA FINISCE QUI ---
   hashedPassword: text("hashed_password"), // Opzionale per i social login
   provider: text("provider").notNull().default("local"), // 'local', 'google', etc.
   providerId: text("provider_id"), // ID univoco dal provider social
@@ -22,7 +25,7 @@ export const users = sqliteTable("users", {
 
 // =================================================================
 // TABELLA LISTE DELLA SPESA
-// Ogni riga rappresenta una lista della spesa che puÃ² essere condivisa.
+// Ogni riga rappresenta una lista della spesa che puÃƒÂ² essere condivisa.
 // =================================================================
 export const shoppingLists = sqliteTable("shopping_lists", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -63,13 +66,13 @@ export const stores = sqliteTable("stores", {
 // =================================================================
 // TABELLA EVENTI DI ACQUISTO
 // Registra ogni singolo 'check' di un prodotto in un negozio specifico.
-// Questa è la fonte dati per l'algoritmo di calcolo del layout.
+// Questa Ã¨ la fonte dati per l'algoritmo di calcolo del layout.
 // =================================================================
 export const purchase_events = sqliteTable("purchase_events", {
     id: integer("id").primaryKey({ autoIncrement: true }),
     userId: integer("user_id").notNull().references(() => users.id),
     storeId: integer("store_id").notNull().references(() => stores.id),
-    // Usiamo il nome della categoria direttamente, più semplice per l'algoritmo.
+    // Usiamo il nome della categoria direttamente, piÃ¹ semplice per l'algoritmo.
     categoryName: text("category_name").notNull(), 
     // Il timestamp esatto dell'acquisto (lo swipe in-app).
     timestamp: text("timestamp").notNull().$defaultFn(() => new Date().toISOString()),
@@ -120,7 +123,7 @@ export const purchaseHistory = sqliteTable("purchase_history", {
 });
 
 // Le tabelle 'suggestions' e 'ecommerceMatches' possono rimanere legate all'utente
-// o essere legate alla lista. Per semplicitÃ , le leghiamo all'utente che le genera.
+// o essere legate alla lista. Per semplicitÃƒÂ , le leghiamo all'utente che le genera.
 export const suggestions = sqliteTable("suggestions", {
     id: integer("id").primaryKey({ autoIncrement: true }),
     userId: integer("user_id").notNull().references(() => users.id),

@@ -5,13 +5,16 @@
   "license": "MIT",
   "scripts": {
     "dev": "concurrently \"npm:dev:server\" \"npm:dev:client\"",
-    "dev:server": "tsx --env-file .env server/index.ts --ignore 'server/data/**'",
-    "dev:client": "vite client --config vite.config.ts --host",
-    "build": "vite build && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
-    "start": "NODE_ENV=production node dist/index.js",
+    "dev:server": "tsx --watch --env-file .env server/index.ts",
+    "dev:client": "vite",
+    "build:client": "vite build",
+    "build:server": "esbuild server/index.ts --platform=node --bundle --outfile=dist/index.js --format=esm --packages=external",
+    "build": "npm run build:client && npm run build:server",
+    "start": "cross-env NODE_ENV=production node dist/index.js",
     "check": "tsc",
     "db:push": "drizzle-kit push",
-    "job:calculate-layouts": "tsx server/jobs/calculate-layouts.ts"
+    "db:generate": "drizzle-kit generate",
+    "job:calculate-layouts": "tsx --env-file .env server/jobs/calculate-layouts.ts"
   },
   "dependencies": {
     "@google/genai": "^1.11.0",
@@ -113,13 +116,15 @@
     "@vitejs/plugin-react": "^4.3.2",
     "autoprefixer": "^10.4.20",
     "concurrently": "^9.2.0",
+    "cross-env": "^7.0.3",
     "drizzle-kit": "^0.30.4",
     "esbuild": "^0.25.0",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.19.1",
     "typescript": "5.6.3",
-    "vite": "^5.4.19"
+    "vite": "^5.4.19",
+    "vite-plugin-pwa": "^0.20.1"
   },
   "optionalDependencies": {
     "bufferutil": "^4.0.8"

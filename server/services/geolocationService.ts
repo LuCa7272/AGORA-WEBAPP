@@ -1,7 +1,4 @@
-// FILE: server/services/geolocationService.ts (NUOVO FILE)
-
-// NOTA: Per usare questo servizio, dovrai installare il client di Google:
-// npm install @googlemaps/google-maps-services-js
+// FILE: server/services/geolocationService.ts (VERSIONE FINALE DI PRODUZIONE)
 
 import { Client, Place, PlacesNearbyRanking } from "@googlemaps/google-maps-services-js";
 
@@ -20,6 +17,13 @@ class GeolocationService {
     constructor() {
         this.apiKey = process.env.GOOGLE_MAPS_API_KEY;
         this.client = new Client({});
+
+        // Aggiungiamo un controllo all'avvio per assicurarci che la chiave sia caricata
+        if (!this.apiKey) {
+            console.warn("ATTENZIONE: GOOGLE_MAPS_API_KEY non è impostata. Il servizio di geolocalizzazione non funzionerà.");
+        } else {
+            console.log("✅ Servizio di geolocalizzazione inizializzato con API Key.");
+        }
     }
 
     /**
@@ -29,18 +33,10 @@ class GeolocationService {
      * @returns Una promessa che si risolve con un array di negozi trovati.
      */
     public async findNearbySupermarkets(latitude: number, longitude: number): Promise<NearbyStore[]> {
+        // Se la chiave non è disponibile, restituisce un array vuoto invece del mock.
+        // Questo è il comportamento corretto per un ambiente di produzione.
         if (!this.apiKey) {
-            console.warn("ATTENZIONE: GOOGLE_MAPS_API_KEY non è impostata. Il servizio di geolocalizzazione restituirà risultati vuoti.");
-            // Restituisce un risultato finto per permettere il test offline
-            return [
-                {
-                    externalId: 'test_store_123',
-                    name: 'Supermercato di Test (Esselunga)',
-                    address: 'Via del Codice, 42, Milano',
-                    latitude: 45.4582,
-                    longitude: 9.1633,
-                }
-            ];
+            return [];
         }
 
         try {
@@ -50,7 +46,7 @@ class GeolocationService {
                     radius: 500, // Cerca in un raggio di 500 metri
                     type: "supermarket",
                     key: this.apiKey,
-                    rankby: PlacesNearbyRanking.distance, // Ordina per distanza
+                    rankby: PlacesNearbyRanking.distance,
                 },
             });
 

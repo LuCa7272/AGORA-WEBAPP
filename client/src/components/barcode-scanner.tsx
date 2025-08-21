@@ -1,10 +1,8 @@
-// FILE: client/src/components/barcode-scanner.tsx (VERSIONE CON DEBUG E MIGLIORAMENTI)
+// FILE: client/src/components/barcode-scanner.tsx (VERSIONE CON CONTROLLO MANUALE DELLO STREAM)
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-// --- MODIFICA 1/4: IMPORTIAMO I FORMATI E GLI HINTS ---
 import { BrowserMultiFormatReader, NotFoundException, IScannerControls, DecodeHintType, BarcodeFormat } from '@zxing/library';
-// --- FINE MODIFICA 1/4 ---
-import { Camera, RefreshCw, X, AlertTriangle } from 'lucide-react';
+import { Camera, X, AlertTriangle } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -13,6 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from './ui/button';
+import { DialogDescription } from './ui/dialog';
 
 interface BarcodeScannerProps {
   onScanSuccess: (text: string) => void;
@@ -23,126 +22,144 @@ export default function BarcodeScanner({ onScanSuccess, onClose }: BarcodeScanne
   const [videoInputDevices, setVideoInputDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  // --- MODIFICA 2/4: AGGIUNGIAMO UNO STATO PER IL FEEDBACK VISIVO ---
   const [isScanning, setIsScanning] = useState(true);
-  // --- FINE MODIFICA 2/4 ---
+  const [isLoading, setIsLoading] = useState(true);
 
   const videoRef = useRef<HTMLVideoElement>(null);
-  const controlsRef = useRef<IScannerControls | null>(null);
-  
-  const stopScan = useCallback(() => {
-    if (controlsRef.current) {
-      controlsRef.current.stop();
-      controlsRef.current = null;
+  // --- MODIFICA 1/4: Riferimento per lo stream video, per poterlo fermare correttamente ---
+  const streamRef = useRef<MediaStream | null>(null);
+  const codeReaderRef = useRef(new BrowserMultiFormatReader());
+
+  // Funzione di cleanup super robusta
+  const stopScanAndReleaseCamera = useCallback(() => {
+    // Ferma la libreria di decodifica
+    codeReaderRef.current.reset();
+    // Ferma ogni traccia dello stream (luce della fotocamera spenta)
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
     }
+    console.log("[Scanner] Fotocamera e scanner rilasciati correttamente.");
   }, []);
 
+  // --- MODIFICA 2/4: useEffect è stato completamente riscritto per il controllo manuale ---
   useEffect(() => {
-    // --- MODIFICA 3/4: AGGIUNGIAMO HINTS E LOG DI DEBUG ---
-    console.log("[Scanner] L'effetto useEffect è partito.");
+    let isMounted = true; // Flag per prevenire race conditions durante lo smontaggio
 
-    // Creiamo una mappa di "hints" per ottimizzare la scansione.
-    // Diciamo alla libreria di concentrarsi sui formati EAN, molto comuni nei prodotti.
-    const hints = new Map();
-    const formats = [BarcodeFormat.EAN_13, BarcodeFormat.EAN_8, BarcodeFormat.UPC_A, BarcodeFormat.UPC_E];
-    hints.set(DecodeHintType.POSSIBLE_FORMATS, formats);
+    const setupAndStartScanner = async () => {
+      if (!isMounted) return;
+      setIsLoading(true);
+      setErrorMessage(null);
+      stopScanAndReleaseCamera(); // Assicura che tutto sia pulito prima di iniziare
 
-    // Inizializziamo il lettore con gli hints.
-    const codeReader = new BrowserMultiFormatReader(hints);
-    console.log("[Scanner] Inizializzato BrowserMultiFormatReader con hints per EAN.");
-
-    const startScanner = async () => {
       try {
-        console.log("[Scanner] Richiesta elenco dispositivi video...");
-        const devices = await codeReader.listVideoInputDevices();
-        console.log(`[Scanner] Trovati ${devices.length} dispositivi video.`);
-        setVideoInputDevices(devices);
+        // Step 1: Ottieni la lista dei dispositivi
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+        if (!isMounted) return;
+        
+        setVideoInputDevices(videoDevices);
 
-        if (devices.length > 0) {
-          const initialDeviceId = devices[0].deviceId;
-          setSelectedDeviceId(initialDeviceId);
-          
-          console.log(`[Scanner] Tentativo di avvio decodifica dal dispositivo: ${initialDeviceId}`);
-          if (!videoRef.current) {
-            console.error("[Scanner] Errore critico: videoRef non è ancora disponibile!");
-            return;
+        if (videoDevices.length === 0) {
+          throw new Error("Nessuna fotocamera trovata.");
+        }
+        
+        // Se non è ancora stato selezionato un device, scegliamo il migliore (quello posteriore)
+        const currentDeviceId = selectedDeviceId || 
+            (videoDevices.find(d => /back|rear|environment/i.test(d.label))?.deviceId || videoDevices[0].deviceId);
+        
+        if (selectedDeviceId !== currentDeviceId) {
+          setSelectedDeviceId(currentDeviceId);
+        }
+
+        console.log(`[Scanner] Utilizzo dispositivo: ${currentDeviceId}`);
+
+        // Step 2: Richiedi lo stream con le constraints di autofocus
+        const constraints: MediaStreamConstraints = {
+          video: {
+            deviceId: { exact: currentDeviceId },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            advanced: [{ focusMode: 'continuous' }]
           }
+        };
 
-          controlsRef.current = await codeReader.decodeFromVideoDevice(
-            initialDeviceId,
-            videoRef.current,
-            (result, error, controls) => {
-              if (result) {
-                console.log("[Scanner] SUCCESSO! Codice trovato:", result.getText());
-                setIsScanning(false); // Ferma il feedback visivo
-                controls.stop();
-                controlsRef.current = null;
-                onScanSuccess(result.getText());
-              }
-
-              if (error && !(error instanceof NotFoundException)) {
-                // Logghiamo solo errori reali, non il "NotFound" che è normale frame per frame.
-                console.error('[Scanner] Errore di decodifica nel frame:', error);
-              }
-            }
-          );
-           console.log("[Scanner] Decodifica avviata con successo.");
-        } else {
-          setErrorMessage("Nessuna fotocamera trovata sul dispositivo.");
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        if (!isMounted || !videoRef.current) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
         }
-      } catch (err) {
-        console.error("[Scanner] Errore di inizializzazione:", err);
-        setErrorMessage("Accesso alla fotocamera negato. Controlla i permessi del browser.");
+
+        streamRef.current = stream; // Salva lo stream nel ref
+        videoRef.current.srcObject = stream;
+        
+        // Dobbiamo assicurarci che il video sia in riproduzione prima di iniziare a decodificare
+        await videoRef.current.play();
+        
+        console.log("[Scanner] Stream video attivo. Avvio decodifica dall'elemento video.");
+        setIsLoading(false);
+        setIsScanning(true);
+        
+        // Step 3: Dici a ZXing di decodificare dallo stream che abbiamo preparato noi
+        await codeReaderRef.current.decodeFromVideoElement(videoRef.current, (result, error) => {
+          if (result) {
+            console.log("[Scanner] SUCCESSO! Codice:", result.getText());
+            setIsScanning(false);
+            onScanSuccess(result.getText());
+          }
+          if (error && !(error instanceof NotFoundException)) {
+            console.error('[Scanner] Errore di decodifica:', error);
+            // Non impostiamo un messaggio di errore per errori di frame, solo per quelli di setup
+          }
+        });
+
+      } catch (err: any) {
+        console.error("[Scanner] Errore critico nel setup:", err);
+        if (isMounted) {
+            setErrorMessage("Impossibile avviare la fotocamera. Controlla i permessi e ricarica la pagina.");
+            setIsLoading(false);
+        }
       }
     };
     
-    startScanner();
+    setupAndStartScanner();
 
+    // Funzione di cleanup
     return () => {
-      console.log("[Scanner] Pulizia... Stoppando lo scanner.");
-      stopScan();
+      isMounted = false;
+      stopScanAndReleaseCamera();
     };
-  }, [onScanSuccess, stopScan]); // Manteniamo le dipendenze corrette.
-  
-  // La funzione handleCameraChange non richiede modifiche significative
+  }, [selectedDeviceId, onScanSuccess, stopScanAndReleaseCamera]); // Si riattiva solo se cambia il device selezionato
+
+
+  // --- MODIFICA 3/4: La funzione di cambio ora si limita a cambiare lo stato ---
   const handleCameraChange = (deviceId: string) => {
-    stopScan();
-    setSelectedDeviceId(deviceId);
-    
-    const hints = new Map();
-    const formats = [BarcodeFormat.EAN_13, BarcodeFormat.EAN_8];
-    hints.set(DecodeHintType.POSSIBLE_FORMATS, formats);
-    const codeReader = new BrowserMultiFormatReader(hints);
-    
-    codeReader.decodeFromVideoDevice(
-      deviceId,
-      videoRef.current!,
-      (result, error, controls) => {
-        if (result) {
-          setIsScanning(false);
-          controls.stop();
-          controlsRef.current = null;
-          onScanSuccess(result.getText());
-        }
-      }
-    ).then(controls => {
-      controlsRef.current = controls;
-    }).catch(err => {
-      console.error("Errore nel cambio fotocamera:", err);
-      setErrorMessage("Impossibile avviare la fotocamera selezionata.");
-    });
+    // Cambiando lo stato, l'hook useEffect si riattiverà e gestirà tutto il flusso di riavvio
+    setSelectedDeviceId(deviceId); 
   };
 
   return (
     <div className="relative w-full h-full bg-black rounded-lg overflow-hidden flex items-center justify-center">
-      <video ref={videoRef} className="w-full h-full object-cover" />
-      <div className="absolute inset-0 flex flex-col justify-between p-4">
+      <DialogDescription className="sr-only">
+        Punta la fotocamera verso un codice a barre per aggiungerlo alla lista.
+      </DialogDescription>
+      
+      {/* --- MODIFICA 4/4: Aggiunto `playsInline` per una migliore compatibilità mobile --- */}
+      <video ref={videoRef} className="w-full h-full object-cover" playsInline muted />
+      
+      {isLoading && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-20">
+            <p className="text-white font-medium">Avvio fotocamera...</p>
+        </div>
+      )}
+
+      <div className="absolute inset-0 flex flex-col justify-between p-4 z-10">
         <div className="flex justify-between items-center w-full">
           {videoInputDevices.length > 1 ? (
-            <Select value={selectedDeviceId} onValueChange={handleCameraChange}>
+            <Select value={selectedDeviceId} onValueChange={handleCameraChange} disabled={isLoading}>
               <SelectTrigger className="w-[180px] bg-black/50 text-white border-white/30">
                 <Camera className="w-4 h-4 mr-2" />
-                <SelectValue placeholder="Seleziona fotocamera" />
+                <SelectValue placeholder="Fotocamera" />
               </SelectTrigger>
               <SelectContent>
                 {videoInputDevices.map((device) => (
@@ -152,9 +169,7 @@ export default function BarcodeScanner({ onScanSuccess, onClose }: BarcodeScanne
                 ))}
               </SelectContent>
             </Select>
-          ) : (
-            <div />
-          )}
+          ) : <div />}
           {onClose && (
             <Button variant="ghost" size="icon" onClick={onClose} className="text-white bg-black/50 hover:bg-black/70 rounded-full">
               <X className="w-5 h-5" />
@@ -162,23 +177,25 @@ export default function BarcodeScanner({ onScanSuccess, onClose }: BarcodeScanne
           )}
         </div>
 
-        {/* --- MODIFICA 4/4: MIGLIORIAMO L'INDICATORE DI MIRA --- */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            {/* Il bordo ora cambia colore in base allo stato di scansione */}
-            <div className={`w-3/4 max-w-sm h-1/3 border-4 rounded-2xl shadow-lg transition-colors duration-300 ${
-                isScanning ? 'border-white/50' : 'border-green-500'
-            }`}>
-                {/* Aggiungiamo un'animazione pulsante per indicare che la scansione è attiva */}
-                {isScanning && (
-                    <div className="relative w-full h-full">
-                        <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-red-500 animate-ping" />
+            <div className={`w-3/4 max-w-sm h-1/3 border-4 rounded-2xl shadow-lg transition-colors duration-300 ${isScanning ? 'border-white/50' : 'border-green-500 animate-pulse'}`}>
+                {isScanning && !isLoading && (
+                    <div className="relative w-full h-full overflow-hidden rounded-lg">
+                        <div 
+                           className="absolute top-0 left-0 right-0 h-0.5 bg-red-500/80 shadow-[0_0_10px_red]"
+                           style={{ animation: 'scan-laser 2.5s infinite ease-in-out' }}
+                        />
                     </div>
                 )}
             </div>
         </div>
-        {/* --- FINE MODIFICA 4/4 --- */}
+        
+        <style>
+            {`@keyframes scan-laser { 0% { transform: translateY(-10px); opacity: 0.5; } 50% { transform: translateY(calc(100% + 10px)); opacity: 1; } 100% { transform: translateY(-10px); opacity: 0.5; } }`}
+        </style>
 
         <div className="w-full">
+            {!errorMessage && isLoading && <div className="text-center text-white text-sm p-2 bg-black/30 rounded-md">In attesa dei permessi della fotocamera...</div>}
           {errorMessage && (
             <div className="bg-red-500/80 text-white p-3 rounded-lg flex items-center gap-2">
               <AlertTriangle className="w-5 h-5" />

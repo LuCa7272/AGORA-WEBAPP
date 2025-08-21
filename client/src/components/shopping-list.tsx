@@ -1,4 +1,4 @@
-// FILE: client/components/shopping-list.tsx (VERSIONE FINALE COMPLETA)
+// FILE: client/components/shopping-list.tsx (CON ACQUISTO E CANCELLAZIONE OFFLINE)
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -10,35 +10,35 @@ import { apiRequest } from "@/lib/queryClient";
 import { formatFrequencyText, getFrequencyColor, getFrequencyDots } from "@/lib/frequency-calculator";
 import type { ShoppingItem } from "@shared/schema";
 import { useSwipeable } from "react-swipeable";
+import { useAuth } from "@/hooks/use-auth";
+// Importiamo le nuove funzioni specifiche dalla nostra coda offline
+import { addPurchaseToOfflineQueue, addDeleteToOfflineQueue } from "@/lib/offline-queue";
 
-// --- MODIFICA 1/4: AGGIORNIAMO LE PROPS DEL COMPONENTE ---
 interface ShoppingListProps {
   isMarketMode: boolean;
   activeListId: number;
-  // (Opzionale) ID del negozio in cui l'utente ha fatto il check-in.
   activeStoreId: number | null; 
-  // (Opzionale) Array con l'ordine delle categorie calcolato per il negozio.
   categoryOrder: string[]; 
 }
-// --- FINE MODIFICA 1/4 ---
 
+// Il componente figlio riceve semplici funzioni di callback
 const ShoppingItemRow = ({
   item,
   isMarketMode,
-  purchaseItemMutation,
-  deleteItemMutation
+  onPurchase,
+  onDelete
 }: {
   item: ShoppingItem;
   isMarketMode: boolean;
-  purchaseItemMutation: any; // Mantenuto any per semplicità
-  deleteItemMutation: any;
+  onPurchase: (item: ShoppingItem) => void;
+  onDelete: (itemId: number) => void;
 }) => {
   const [swipeProgress, setSwipeProgress] = useState(0);
 
   const handlers = useSwipeable({
     onSwiped: () => setSwipeProgress(0),
-    onSwipedLeft: () => isMarketMode && purchaseItemMutation.mutate(item),
-    onSwipedRight: () => isMarketMode && purchaseItemMutation.mutate(item),
+    onSwipedLeft: () => isMarketMode && onPurchase(item),
+    onSwipedRight: () => isMarketMode && onPurchase(item),
     onSwiping: (eventData) => {
       if (isMarketMode) {
         const progress = Math.max(-100, Math.min(100, eventData.deltaX));
@@ -83,7 +83,7 @@ const ShoppingItemRow = ({
       <div className="p-3 flex items-center gap-3 bg-inherit rounded-2xl">
         {isMarketMode && (
           <div
-            onClick={() => purchaseItemMutation.mutate(item)}
+            onClick={() => onPurchase(item)}
             className="w-8 h-8 border-2 border-[color:var(--md-sys-color-outline)] rounded-lg flex-shrink-0 cursor-pointer flex items-center justify-center transition-all duration-200 hover:bg-[color:var(--md-sys-color-surface-container-highest)]"
           />
         )}
@@ -107,8 +107,7 @@ const ShoppingItemRow = ({
             <div className="w-10 h-10 flex items-center justify-center text-[color:var(--md-sys-color-primary)]"><Check className="w-6 h-6" /></div>
           ) : (
             <button
-              onClick={() => deleteItemMutation.mutate(item.id!)}
-              disabled={deleteItemMutation.isPending}
+              onClick={() => onDelete(item.id!)}
               className="md3-button-text text-[color:var(--md-sys-color-error)] !p-0 w-10 h-10 flex items-center justify-center"
               aria-label="Elimina prodotto"
             ><Trash2 className="w-5 h-5" /></button>
@@ -119,11 +118,10 @@ const ShoppingItemRow = ({
   );
 };
 
-// --- MODIFICA 2/4: AGGIORNIAMO LA FIRMA DELLA FUNZIONE ---
 export default function ShoppingList({ isMarketMode, activeListId, activeStoreId, categoryOrder }: ShoppingListProps) {
-// --- FINE MODIFICA 2/4 ---
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
 
   const { data: items = [], isLoading } = useQuery<ShoppingItem[]>({
     queryKey: ["shoppingItems", activeListId],
@@ -136,25 +134,52 @@ export default function ShoppingList({ isMarketMode, activeListId, activeStoreId
   });
 
   const deleteItemMutation = useMutation({
-    mutationFn: (id: number) => apiRequest("DELETE", `/api/items/${id}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["shoppingItems", activeListId] });
-      toast({ title: "Prodotto rimosso" });
+    mutationFn: async (itemId: number) => {
+      if (!navigator.onLine) {
+        addDeleteToOfflineQueue(itemId);
+        return { offline: true };
+      }
+      await apiRequest("DELETE", `/api/items/${itemId}`);
+      return { offline: false };
     },
-    onError: (error: any) => toast({ title: "Errore", description: error.message, variant: "destructive" }),
+    onMutate: async (itemId: number) => {
+      await queryClient.cancelQueries({ queryKey: ["shoppingItems", activeListId] });
+      const previousItems = queryClient.getQueryData<ShoppingItem[]>(["shoppingItems", activeListId]);
+      queryClient.setQueryData<ShoppingItem[]>(["shoppingItems", activeListId], (old) =>
+        old ? old.filter((item) => item.id !== itemId) : []
+      );
+      return { previousItems };
+    },
+    onSuccess: (data, itemId) => {
+      if (data.offline) {
+        toast({ title: "Prodotto rimosso offline", description: "La cancellazione sarà sincronizzata." });
+      } else {
+        toast({ title: "Prodotto rimosso" });
+      }
+    },
+    onError: (err, itemId, context) => {
+      if (context?.previousItems) {
+        queryClient.setQueryData(["shoppingItems", activeListId], context.previousItems);
+      }
+      toast({ title: "Errore", description: "Impossibile cancellare il prodotto.", variant: "destructive" });
+    },
+    onSettled: (data) => {
+      if (data && !data.offline) {
+        queryClient.invalidateQueries({ queryKey: ["shoppingItems", activeListId] });
+      }
+    },
   });
 
   const purchaseItemMutation = useMutation({
-    // --- MODIFICA 3/4: AGGIORNIAMO LA LOGICA DI ACQUISTO ---
-    mutationFn: (itemToPurchase: ShoppingItem) => {
-        // Includiamo l'ID del negozio nella chiamata API.
-        // Se `activeStoreId` è null, non verrà inviato, gestendo il caso in cui
-        // l'utente non abbia fatto il check-in.
-        return apiRequest("POST", `/api/items/${itemToPurchase.id}/purchase`, {
-            storeId: activeStoreId 
-        });
+    mutationFn: async (itemToPurchase: ShoppingItem) => {
+      if (!user) throw new Error("Utente non autenticato.");
+      if (!navigator.onLine) {
+        addPurchaseToOfflineQueue(itemToPurchase.id!, user.id, activeStoreId);
+        return { offline: true };
+      }
+      await apiRequest("POST", `/api/items/${itemToPurchase.id}/purchase`, { storeId: activeStoreId });
+      return { offline: false };
     },
-    // --- FINE MODIFICA 3/4 ---
     onMutate: async (itemToPurchase: ShoppingItem) => {
       await queryClient.cancelQueries({ queryKey: ["shoppingItems", activeListId] });
       const previousItems = queryClient.getQueryData<ShoppingItem[]>(["shoppingItems", activeListId]);
@@ -163,19 +188,25 @@ export default function ShoppingList({ isMarketMode, activeListId, activeStoreId
       );
       return { previousItems };
     },
+    onSuccess: (data, item) => {
+      if (navigator.vibrate) navigator.vibrate(50);
+      if (data.offline) {
+        toast({ title: `"${item.name}" acquistato offline`, description: "Verrà sincronizzato." });
+      } else {
+        toast({ title: `"${item.name}" acquistato!` });
+      }
+    },
     onError: (err, itemToPurchase, context) => {
       if (context?.previousItems) {
         queryClient.setQueryData(["shoppingItems", activeListId], context.previousItems);
       }
-      toast({ title: "Errore", description: "Impossibile acquistare il prodotto.", variant: "destructive" });
+      toast({ title: "Errore di Sincronizzazione", description: "Impossibile acquistare il prodotto.", variant: "destructive" });
     },
-    onSuccess: (data, itemToPurchase) => {
-      if (navigator.vibrate) navigator.vibrate(50);
-      toast({ title: `"${itemToPurchase.name}" acquistato!` });
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["shoppingItems", activeListId] });
-      queryClient.invalidateQueries({ queryKey: ["history", activeListId] });
+    onSettled: (data, error) => {
+      if (data && !data.offline && !error) {
+        queryClient.invalidateQueries({ queryKey: ["shoppingItems", activeListId] });
+        queryClient.invalidateQueries({ queryKey: ["history", activeListId] });
+      }
     },
   });
 
@@ -187,7 +218,6 @@ export default function ShoppingList({ isMarketMode, activeListId, activeStoreId
 
   const activeItems = items.filter(item => !item.isCompleted);
   
-  // --- MODIFICA 4/4: AGGIORNIAMO LA LOGICA DI RAGGRUPPAMENTO E ORDINAMENTO ---
   const groupedItems = isMarketMode
     ? Object.entries(
         activeItems.reduce((groups, item) => {
@@ -197,33 +227,27 @@ export default function ShoppingList({ isMarketMode, activeListId, activeStoreId
           return groups;
         }, {} as Record<string, ShoppingItem[]>)
       ).sort(([catA], [catB]) => {
-        // Se abbiamo un ordine personalizzato dal server, lo usiamo.
         if (categoryOrder && categoryOrder.length > 0) {
             const indexA = categoryOrder.indexOf(catA);
             const indexB = categoryOrder.indexOf(catB);
-
-            // Se entrambe le categorie sono nel nostro layout, le ordiniamo di conseguenza.
             if (indexA !== -1 && indexB !== -1) return indexA - indexB;
-            // Se solo una delle due è nel layout, quella ha la precedenza.
             if (indexA !== -1) return -1;
             if (indexB !== -1) return 1;
         }
-        // Fallback: se non c'è un layout o le categorie non sono presenti, usiamo l'ordine alfabetico.
         return catA.localeCompare(catB);
       })
     : [];
-  // --- FINE MODIFICA 4/4 ---
 
-  if (activeItems.length === 0) return (
-      <div className="text-center py-16 px-4">
-        <div className="w-20 h-20 md3-surface-variant rounded-full flex items-center justify-center mx-auto mb-6">
-          <ShoppingBasket className="w-10 h-10" />
-        </div>
-        <h3 className="md3-headline-small mb-3">Lista completata!</h3>
-        <p className="md3-body-large text-[color:var(--md-sys-color-on-surface-variant)]">
-          Hai comprato tutto. Usa il form in alto per aggiungere nuovi prodotti.
-        </p>
+  if (activeItems.length === 0 && !isLoading) return (
+    <div className="text-center py-16 px-4">
+      <div className="w-20 h-20 md3-surface-variant rounded-full flex items-center justify-center mx-auto mb-6">
+        <ShoppingBasket className="w-10 h-10" />
       </div>
+      <h3 className="md3-headline-small mb-3">Lista completata!</h3>
+      <p className="md3-body-large text-[color:var(--md-sys-color-on-surface-variant)]">
+        Hai comprato tutto. Usa il form in alto per aggiungere nuovi prodotti.
+      </p>
+    </div>
   );
 
   return (
@@ -238,7 +262,13 @@ export default function ShoppingList({ isMarketMode, activeListId, activeStoreId
               </div>
               <div className="space-y-3">
                 {categoryItems.map((item) => (
-                  <ShoppingItemRow key={item.id} item={item} isMarketMode={true} purchaseItemMutation={purchaseItemMutation} deleteItemMutation={deleteItemMutation}/>
+                  <ShoppingItemRow 
+                    key={item.id} 
+                    item={item} 
+                    isMarketMode={true} 
+                    onPurchase={purchaseItemMutation.mutate}
+                    onDelete={deleteItemMutation.mutate}
+                  />
                 ))}
               </div>
             </div>
@@ -252,7 +282,13 @@ export default function ShoppingList({ isMarketMode, activeListId, activeStoreId
           </div>
           <div className="space-y-3">
             {activeItems.map((item) => (
-              <ShoppingItemRow key={item.id} item={item} isMarketMode={false} purchaseItemMutation={purchaseItemMutation} deleteItemMutation={deleteItemMutation}/>
+              <ShoppingItemRow 
+                key={item.id} 
+                item={item} 
+                isMarketMode={false} 
+                onPurchase={purchaseItemMutation.mutate}
+                onDelete={deleteItemMutation.mutate}
+              />
             ))}
           </div>
         </>

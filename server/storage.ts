@@ -1,13 +1,11 @@
-// FILE: server/storage.ts (VERSIONE COMPLETA CON MODIFICHE)
+// FILE: server/storage.ts (VERSIONE COMPLETA E CORRETTA)
 
 import { db } from './db';
 import { 
   shoppingItems, purchaseHistory, suggestions, ecommerceMatches, users,
   shoppingLists, listMembers,
-  // --- MODIFICHE INIZIANO QUI (IMPORT) ---
   stores, purchase_events, store_layouts,
   type Store, type PurchaseEvent, type StoreLayout,
-  // --- FINE MODIFICHE (IMPORT) ---
   type User, type ShoppingList, type ShoppingItem, 
   type InsertShoppingItem, type PurchaseHistory, type Suggestion, 
   type InsertSuggestion, type EcommerceMatch, type InsertEcommerceMatch
@@ -28,7 +26,8 @@ export interface IStorage {
   getShoppingItemsByListId(listId: number): Promise<ShoppingItem[]>;
   createShoppingItem(item: InsertShoppingItem): Promise<ShoppingItem>;
   deleteShoppingItem(id: number): Promise<void>;
-  markItemAsPurchased(id: number, storeId?: number): Promise<void>; // Modificato per accettare storeId
+  // --- FIRMA AGGIORNATA ---
+  markItemAsPurchased(id: number, userId: number, storeId?: number): Promise<void>;
   
   // Purchase History
   getPurchaseHistoryByListId(listId: number): Promise<PurchaseHistory[]>;
@@ -44,7 +43,6 @@ export interface IStorage {
   clearEcommerceMatches(platform: string, userId: number): Promise<void>;
   getEcommerceMatchesByItemName(userId: number, platform: string, itemName: string): Promise<EcommerceMatch[]>;
 
-  // --- MODIFICHE INIZIANO QUI (NUOVE INTERFACCE) ---
   // Stores
   findStoreByExternalId(externalId: string): Promise<Store | undefined>;
   createStore(storeData: { externalId?: string; name: string; address?: string; latitude: number; longitude: number }): Promise<Store>;
@@ -55,7 +53,6 @@ export interface IStorage {
   // Store Layouts (cache per l'app)
   getStoreLayout(storeId: number): Promise<StoreLayout | undefined>;
   upsertStoreLayout(layout: { storeId: number; categoryOrder: string[] }): Promise<StoreLayout>;
-  // --- FINE MODIFICHE (NUOVE INTERFACCE) ---
 }
 
 class DrizzleStorage implements IStorage {
@@ -106,31 +103,43 @@ class DrizzleStorage implements IStorage {
     await db.delete(shoppingItems).where(eq(shoppingItems.id, id));
   }
   
-  // Modifichiamo leggermente `markItemAsPurchased` per accettare anche lo storeId
-  async markItemAsPurchased(id: number, storeId?: number): Promise<void> {
+  // --- INIZIO FUNZIONE MODIFICATA E CORRETTA ---
+  async markItemAsPurchased(id: number, userId: number, storeId?: number): Promise<void> {
+    // Step 1: Recupera l'item dal DB per avere i suoi dettagli
     const [item] = await db.select().from(shoppingItems).where(eq(shoppingItems.id, id)).limit(1);
-    if (!item) throw new Error(`Item con id ${id} non trovato`);
+    if (!item) {
+      throw new Error(`Prodotto con ID ${id} non trovato.`);
+    }
 
-    // Logica per lo storico (rimane invariata per ora)
+    // Step 2: Crea una entry nello storico degli acquisti
     const now = new Date();
     const daysSinceAdded = Math.floor((now.getTime() - new Date(item.dateAdded).getTime()) / (1000 * 60 * 60 * 24));
-    await db.insert(purchaseHistory).values({ /* ... */ });
     
-    // NUOVA LOGICA: Se viene fornito uno storeId, registriamo l'evento per l'algoritmo
+    await db.insert(purchaseHistory).values({
+      listId: item.listId,
+      itemName: item.name,
+      originalItemId: item.id,
+      dateAdded: item.dateAdded,
+      datePurchased: now.toISOString(),
+      daysSinceAdded: daysSinceAdded,
+      category: item.category,
+    });
+
+    // Step 3 (Logica Condizionale): Se siamo in Market Mode (storeId è presente),
+    // registra l'evento per l'algoritmo di layout.
     if (storeId && item.category) {
-        const user = await this.getUserById(1); // Placeholder per l'ID utente loggato
-        if (user) {
-          await this.createPurchaseEvent({
-              userId: user.id,
-              storeId,
-              categoryName: item.category
-          });
-        }
+      // ORA usiamo il vero userId passato come parametro, rimuovendo il codice hardcodato!
+      await this.createPurchaseEvent({
+          userId: userId, // <-- CORREZIONE CRUCIALE
+          storeId: storeId,
+          categoryName: item.category
+      });
     }
     
+    // Step 4: Rimuovi l'item dalla lista della spesa attiva
     await db.delete(shoppingItems).where(eq(shoppingItems.id, id));
   }
-
+  // --- FINE FUNZIONE MODIFICATA E CORRETTA ---
 
   // === PURCHASE HISTORY ===
   async getPurchaseHistoryByListId(listId: number): Promise<PurchaseHistory[]> {
@@ -171,8 +180,6 @@ class DrizzleStorage implements IStorage {
     await db.delete(ecommerceMatches).where(and(eq(ecommerceMatches.platform, platform), eq(ecommerceMatches.userId, userId)));
   }
 
-  // --- MODIFICHE INIZIANO QUI (IMPLEMENTAZIONE NUOVI METODI) ---
-
   // === STORES ===
   async findStoreByExternalId(externalId: string): Promise<Store | undefined> {
     if (!externalId) return undefined;
@@ -188,7 +195,7 @@ class DrizzleStorage implements IStorage {
   // === PURCHASE EVENTS ===
   async createPurchaseEvent(event: { userId: number; storeId: number; categoryName: string }): Promise<PurchaseEvent> {
     const [newEvent] = await db.insert(purchase_events).values(event).returning();
-    console.log(`ðŸ“ Evento di acquisto registrato per utente ${event.userId} nel negozio ${event.storeId} [Categoria: ${event.categoryName}]`);
+    console.log(`Event in-store registrato per utente ${event.userId} nel negozio ${event.storeId} [Categoria: ${event.categoryName}]`);
     return newEvent;
   }
 
@@ -199,34 +206,27 @@ class DrizzleStorage implements IStorage {
   }
   
   async upsertStoreLayout(layout: { storeId: number; categoryOrder: string[] }): Promise<StoreLayout> {
-    // Drizzle per SQLite non ha un `onConflict` nativo come Postgres.
-    // Quindi, eseguiamo una logica di "upsert" manuale.
     const existingLayout = await this.getStoreLayout(layout.storeId);
     
     const layoutData = {
       storeId: layout.storeId,
-      // Drizzle si aspetta una stringa JSON per i campi `json` in SQLite
       categoryOrder: JSON.stringify(layout.categoryOrder),
       lastUpdatedAt: new Date().toISOString()
     };
 
     if (existingLayout) {
-      // Se esiste, AGGIORNA
       const [updatedLayout] = await db.update(store_layouts)
         .set(layoutData)
         .where(eq(store_layouts.id, existingLayout.id))
         .returning();
       return updatedLayout;
     } else {
-      // Se non esiste, INSERISCI
       const [newLayout] = await db.insert(store_layouts)
         .values(layoutData)
         .returning();
       return newLayout;
     }
   }
-  
-  // --- FINE MODIFICHE ---
 }
 
 export const storage = new DrizzleStorage();
