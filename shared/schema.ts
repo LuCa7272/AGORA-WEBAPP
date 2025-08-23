@@ -88,6 +88,7 @@ export const shoppingItems = sqliteTable("shopping_items", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   listId: integer("list_id").notNull().references(() => shoppingLists.id, { onDelete: 'cascade' }),
   name: text("name").notNull(),
+  quantity: text("quantity"),
   category: text("category"),
   dateAdded: text("date_added").notNull().$defaultFn(() => new Date().toISOString()),
   isCompleted: integer("is_completed", { mode: 'boolean' }).notNull().default(false),
@@ -144,6 +145,7 @@ export const insertShoppingItemSchema = createInsertSchema(shoppingItems, {
 }).pick({
   listId: true,
   name: true,
+  quantity: true,
   category: true,
 });
 

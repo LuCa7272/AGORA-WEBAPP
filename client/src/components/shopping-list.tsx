@@ -1,120 +1,105 @@
-// FILE: client/components/shopping-list.tsx (CON ACQUISTO E CANCELLAZIONE OFFLINE)
-
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { it } from "date-fns/locale";
-import { Trash2, ShoppingBasket, Calendar, Check, X, Loader2 } from "lucide-react";
+import { Trash2, ShoppingBasket, Calendar, Check, Loader2, Pencil, Save, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { formatFrequencyText, getFrequencyColor, getFrequencyDots } from "@/lib/frequency-calculator";
 import type { ShoppingItem } from "@shared/schema";
 import { useSwipeable } from "react-swipeable";
 import { useAuth } from "@/hooks/use-auth";
-// Importiamo le nuove funzioni specifiche dalla nostra coda offline
 import { addPurchaseToOfflineQueue, addDeleteToOfflineQueue } from "@/lib/offline-queue";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 
 interface ShoppingListProps {
   isMarketMode: boolean;
   activeListId: number;
-  activeStoreId: number | null; 
-  categoryOrder: string[]; 
+  activeStoreId: number | null;
+  categoryOrder: string[];
 }
 
-// Il componente figlio riceve semplici funzioni di callback
 const ShoppingItemRow = ({
   item,
   isMarketMode,
   onPurchase,
-  onDelete
+  onDelete,
+  onUpdate,
 }: {
   item: ShoppingItem;
   isMarketMode: boolean;
   onPurchase: (item: ShoppingItem) => void;
   onDelete: (itemId: number) => void;
+  onUpdate: (data: { id: number; name?: string; quantity?: string | null }) => void;
 }) => {
-  const [swipeProgress, setSwipeProgress] = useState(0);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedName, setEditedName] = useState(item.name);
+  const [editedQuantity, setEditedQuantity] = useState(item.quantity || "");
+
+  const handleSave = () => {
+    onUpdate({ id: item.id, name: editedName, quantity: editedQuantity });
+    setIsEditing(false);
+  };
 
   const handlers = useSwipeable({
-    onSwiped: () => setSwipeProgress(0),
     onSwipedLeft: () => isMarketMode && onPurchase(item),
     onSwipedRight: () => isMarketMode && onPurchase(item),
-    onSwiping: (eventData) => {
-      if (isMarketMode) {
-        const progress = Math.max(-100, Math.min(100, eventData.deltaX));
-        setSwipeProgress(progress);
-      }
-    },
     trackMouse: true,
   });
 
-  const renderFrequencyIndicator = (item: ShoppingItem) => {
-    if (!item.averageFrequency) return null;
-    const confidence = item.purchaseCount > 1 ? 0.8 : 0.3;
-    const dots = getFrequencyDots(confidence);
-    const colorClass = getFrequencyColor(confidence);
+  if (isEditing) {
     return (
-      <div className="flex items-center mt-1">
-        <div className="flex space-x-1">
-          {Array.from({ length: 5 }, (_, i) => (
-            <div
-              key={i}
-              className={`w-2 h-2 rounded-full transition-colors duration-200 ${
-                i < dots ? colorClass : "bg-[color:var(--md-sys-color-outline-variant)]"
-              }`}
-            />
-          ))}
-        </div>
-        <span className="ml-2 md3-label-small text-[color:var(--md-sys-color-on-surface-variant)]">
-          {formatFrequencyText(item.averageFrequency)}
-        </span>
-      </div>
+      <Card>
+        <CardContent className="p-3 space-y-2">
+          <Input value={editedName} onChange={(e) => setEditedName(e.target.value)} placeholder="Nome prodotto" className="h-10" />
+          <Input value={editedQuantity} onChange={(e) => setEditedQuantity(e.target.value)} placeholder="Quantità (es. 1kg, 6x)" className="h-10" />
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="ghost" size="sm" onClick={() => setIsEditing(false)}><X className="w-4 h-4 mr-1"/>Annulla</Button>
+            <Button size="sm" onClick={handleSave}><Save className="w-4 h-4 mr-1"/>Salva</Button>
+          </div>
+        </CardContent>
+      </Card>
     );
-  };
-  
-  const swipeStyle = {
-    transform: `translateX(${swipeProgress}px)`,
-    backgroundColor: `rgba(0, 109, 61, ${Math.abs(swipeProgress) / 150})`,
-    transition: 'transform 0.1s ease-out, background-color 0.1s ease-out'
-  };
+  }
 
   return (
-    <div {...handlers} className={`md3-surface-container md3-elevation-1 rounded-2xl`} style={isMarketMode ? swipeStyle : {}}>
-      <div className="p-3 flex items-center gap-3 bg-inherit rounded-2xl">
+    <Card {...handlers} className="transition-all duration-100">
+      <CardContent className={cn("p-3 flex items-center gap-3", isMarketMode && "py-4")}>
         {isMarketMode && (
-          <div
-            onClick={() => onPurchase(item)}
-            className="w-8 h-8 border-2 border-[color:var(--md-sys-color-outline)] rounded-lg flex-shrink-0 cursor-pointer flex items-center justify-center transition-all duration-200 hover:bg-[color:var(--md-sys-color-surface-container-highest)]"
-          />
+          <div onClick={() => onPurchase(item)} className="w-8 h-8 border-2 rounded-lg flex-shrink-0 cursor-pointer flex items-center justify-center transition-all border-primary hover:bg-accent/20" />
         )}
-        
         <div className="flex-1 min-w-0">
-          <h3 className={`capitalize truncate ${isMarketMode ? 'md3-title-large' : 'md3-title-medium'}`}>{item.name}</h3>
+          <div className="flex items-center gap-2">
+            <h3 className={cn("capitalize truncate font-semibold", isMarketMode ? 'text-xl' : 'text-base')}>{item.name}</h3>
+            {item.quantity && <Badge variant="secondary">{item.quantity}</Badge>}
+          </div>
           {!isMarketMode && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground mt-1">
+              <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{format(new Date(item.dateAdded), "dd MMM", { locale: it })}</span>
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-1">
+          {isMarketMode ? (
+            <div className="w-10 h-10 flex items-center justify-center text-green-500"><Check className="w-6 h-6" /></div>
+          ) : (
             <>
-              <div className="flex items-center gap-2 md3-body-small text-[color:var(--md-sys-color-on-surface-variant)]">
-                <span>{item.category}</span>
-                <span>•</span>
-                <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{format(new Date(item.dateAdded), "dd MMM", { locale: it })}</span>
-              </div>
-              {renderFrequencyIndicator(item)}
+              <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => setIsEditing(true)}><Pencil className="w-4 h-4" /></Button>
+              <Button variant="ghost" size="icon" className="h-9 w-9 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => onDelete(item.id!)}><Trash2 className="w-4 h-4" /></Button>
             </>
           )}
         </div>
-        
-        <div className="flex items-center">
-          {isMarketMode ? (
-            <div className="w-10 h-10 flex items-center justify-center text-[color:var(--md-sys-color-primary)]"><Check className="w-6 h-6" /></div>
-          ) : (
-            <button
-              onClick={() => onDelete(item.id!)}
-              className="md3-button-text text-[color:var(--md-sys-color-error)] !p-0 w-10 h-10 flex items-center justify-center"
-              aria-label="Elimina prodotto"
-            ><Trash2 className="w-5 h-5" /></button>
-          )}
-        </div>
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 };
 
@@ -122,177 +107,140 @@ export default function ShoppingList({ isMarketMode, activeListId, activeStoreId
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { user } = useAuth();
+  const [openCategories, setOpenCategories] = useState<string[]>([]);
 
   const { data: items = [], isLoading } = useQuery<ShoppingItem[]>({
     queryKey: ["shoppingItems", activeListId],
     queryFn: async () => {
-        if (!activeListId) return [];
-        const res = await apiRequest("GET", `/api/lists/${activeListId}/items`);
-        return res.json();
+      if (!activeListId) return [];
+      const res = await apiRequest("GET", `/api/lists/${activeListId}/items`);
+      return res.json();
     },
     enabled: !!activeListId,
   });
 
+  const groupedItems = useMemo(() => {
+    const activeItems = items.filter(item => !item.isCompleted);
+    return Object.entries(
+      activeItems.reduce((groups, item) => {
+        const category = item.category || "Senza Categoria";
+        if (!groups[category]) groups[category] = [];
+        groups[category].push(item);
+        return groups;
+      }, {} as Record<string, ShoppingItem[]>)
+    ).sort(([catA], [catB]) => {
+      if (isMarketMode && categoryOrder && categoryOrder.length > 0) {
+        const indexA = categoryOrder.indexOf(catA);
+        const indexB = categoryOrder.indexOf(catB);
+        if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+        if (indexA !== -1) return -1;
+        if (indexB !== -1) return 1;
+      }
+      if (catA === "Senza Categoria") return 1;
+      if (catB === "Senza Categoria") return -1;
+      return catA.localeCompare(catB);
+    });
+  }, [items, isMarketMode, categoryOrder]);
+
+  useEffect(() => {
+    const newCategories = groupedItems.map(([category]) => category);
+    setOpenCategories(prevOpen => {
+      const allCategories = new Set([...prevOpen, ...newCategories]);
+      return Array.from(allCategories);
+    });
+  }, [groupedItems]);
+
+  const updateItemMutation = useMutation({
+    mutationFn: async (data: { id: number; name?: string; quantity?: string | null }) => {
+      const { id, ...updateData } = data;
+      return apiRequest("PUT", `/api/items/${id}`, updateData);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["shoppingItems", activeListId] }),
+    onError: (error: any) => toast({ title: "Errore", description: error.message || "Impossibile aggiornare il prodotto", variant: "destructive" }),
+  });
+
   const deleteItemMutation = useMutation({
-    mutationFn: async (itemId: number) => {
-      if (!navigator.onLine) {
-        addDeleteToOfflineQueue(itemId);
-        return { offline: true };
-      }
-      await apiRequest("DELETE", `/api/items/${itemId}`);
-      return { offline: false };
+    mutationFn: (itemId: number) => apiRequest("DELETE", `/api/items/${itemId}`),
+    onSuccess: () => {
+      toast({ title: "Prodotto rimosso" });
+      queryClient.invalidateQueries({ queryKey: ["shoppingItems", activeListId] });
     },
-    onMutate: async (itemId: number) => {
-      await queryClient.cancelQueries({ queryKey: ["shoppingItems", activeListId] });
-      const previousItems = queryClient.getQueryData<ShoppingItem[]>(["shoppingItems", activeListId]);
-      queryClient.setQueryData<ShoppingItem[]>(["shoppingItems", activeListId], (old) =>
-        old ? old.filter((item) => item.id !== itemId) : []
-      );
-      return { previousItems };
-    },
-    onSuccess: (data, itemId) => {
-      if (data.offline) {
-        toast({ title: "Prodotto rimosso offline", description: "La cancellazione sarà sincronizzata." });
-      } else {
-        toast({ title: "Prodotto rimosso" });
-      }
-    },
-    onError: (err, itemId, context) => {
-      if (context?.previousItems) {
-        queryClient.setQueryData(["shoppingItems", activeListId], context.previousItems);
-      }
-      toast({ title: "Errore", description: "Impossibile cancellare il prodotto.", variant: "destructive" });
-    },
-    onSettled: (data) => {
-      if (data && !data.offline) {
-        queryClient.invalidateQueries({ queryKey: ["shoppingItems", activeListId] });
-      }
-    },
+    onError: () => toast({ title: "Errore", description: "Impossibile cancellare il prodotto.", variant: "destructive" }),
   });
 
   const purchaseItemMutation = useMutation({
-    mutationFn: async (itemToPurchase: ShoppingItem) => {
-      if (!user) throw new Error("Utente non autenticato.");
-      if (!navigator.onLine) {
-        addPurchaseToOfflineQueue(itemToPurchase.id!, user.id, activeStoreId);
-        return { offline: true };
-      }
-      await apiRequest("POST", `/api/items/${itemToPurchase.id}/purchase`, { storeId: activeStoreId });
-      return { offline: false };
-    },
+    mutationFn: (itemToPurchase: ShoppingItem) => apiRequest("POST", `/api/items/${itemToPurchase.id}/purchase`, { storeId: activeStoreId }),
     onMutate: async (itemToPurchase: ShoppingItem) => {
       await queryClient.cancelQueries({ queryKey: ["shoppingItems", activeListId] });
-      const previousItems = queryClient.getQueryData<ShoppingItem[]>(["shoppingItems", activeListId]);
-      queryClient.setQueryData<ShoppingItem[]>(["shoppingItems", activeListId], (old) =>
-        old ? old.filter((item) => item.id !== itemToPurchase.id) : []
-      );
+      const previousItems = queryClient.getQueryData<ShoppingItem[]>(["shoppingItems", activeListId]) || [];
+      
+      if (isMarketMode) {
+        const isLastItemInCategory = previousItems.filter(item => item.category === itemToPurchase.category && !item.isCompleted).length === 1;
+        if (isLastItemInCategory) {
+          setOpenCategories(prev => prev.filter(cat => cat !== itemToPurchase.category));
+        }
+      }
+
+      queryClient.setQueryData<ShoppingItem[]>(["shoppingItems", activeListId], old => old ? old.filter(item => item.id !== itemToPurchase.id) : []);
       return { previousItems };
     },
     onSuccess: (data, item) => {
       if (navigator.vibrate) navigator.vibrate(50);
-      if (data.offline) {
-        toast({ title: `"${item.name}" acquistato offline`, description: "Verrà sincronizzato." });
-      } else {
-        toast({ title: `"${item.name}" acquistato!` });
-      }
+      toast({ title: `"${item.name}" acquistato!` });
+      queryClient.invalidateQueries({ queryKey: ["shoppingItems", activeListId] });
+      queryClient.invalidateQueries({ queryKey: ["history", activeListId] });
     },
-    onError: (err, itemToPurchase, context) => {
+    onError: (err, item, context) => {
       if (context?.previousItems) {
         queryClient.setQueryData(["shoppingItems", activeListId], context.previousItems);
       }
-      toast({ title: "Errore di Sincronizzazione", description: "Impossibile acquistare il prodotto.", variant: "destructive" });
-    },
-    onSettled: (data, error) => {
-      if (data && !data.offline && !error) {
-        queryClient.invalidateQueries({ queryKey: ["shoppingItems", activeListId] });
-        queryClient.invalidateQueries({ queryKey: ["history", activeListId] });
-      }
+      toast({ title: "Errore di Sincronizzazione", variant: "destructive" });
     },
   });
 
-  if (isLoading) return (
-      <div className="flex justify-center items-center p-8">
-          <Loader2 className="h-8 w-8 animate-spin text-[color:var(--md-sys-color-primary)]" />
-      </div>
-  );
+  if (isLoading) return <div className="flex justify-center items-center p-8"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
 
-  const activeItems = items.filter(item => !item.isCompleted);
-  
-  const groupedItems = isMarketMode
-    ? Object.entries(
-        activeItems.reduce((groups, item) => {
-          const category = item.category || "Altri";
-          if (!groups[category]) groups[category] = [];
-          groups[category].push(item);
-          return groups;
-        }, {} as Record<string, ShoppingItem[]>)
-      ).sort(([catA], [catB]) => {
-        if (categoryOrder && categoryOrder.length > 0) {
-            const indexA = categoryOrder.indexOf(catA);
-            const indexB = categoryOrder.indexOf(catB);
-            if (indexA !== -1 && indexB !== -1) return indexA - indexB;
-            if (indexA !== -1) return -1;
-            if (indexB !== -1) return 1;
-        }
-        return catA.localeCompare(catB);
-      })
-    : [];
-
-  if (activeItems.length === 0 && !isLoading) return (
+  if (groupedItems.length === 0 && !isLoading) return (
     <div className="text-center py-16 px-4">
-      <div className="w-20 h-20 md3-surface-variant rounded-full flex items-center justify-center mx-auto mb-6">
-        <ShoppingBasket className="w-10 h-10" />
-      </div>
-      <h3 className="md3-headline-small mb-3">Lista completata!</h3>
-      <p className="md3-body-large text-[color:var(--md-sys-color-on-surface-variant)]">
-        Hai comprato tutto. Usa il form in alto per aggiungere nuovi prodotti.
-      </p>
+      <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mx-auto mb-6"><ShoppingBasket className="w-10 h-10 text-muted-foreground" /></div>
+      <h3 className="text-xl font-semibold mb-3">Lista completata!</h3>
+      <p className="text-muted-foreground">Hai comprato tutto. Usa il form in alto per aggiungere nuovi prodotti.</p>
     </div>
   );
 
   return (
-    <div className="p-4 space-y-6">
-      {isMarketMode ? (
-        <div className="space-y-6">
-          {groupedItems.map(([category, categoryItems]) => (
-            <div key={category}>
-              <div className="flex justify-between items-center px-2 mb-2">
-                <h2 className="md3-title-medium capitalize">{category}</h2>
-                <span className="md3-label-large md3-secondary-container px-3 py-1 rounded-full">{categoryItems.length}</span>
+    <div className="space-y-4 pt-4">
+       <div className="flex justify-between items-center px-2">
+            <h2 className="text-lg font-semibold">{isMarketMode ? "Modalità Spesa" : "Da Comprare"}</h2>
+            <Badge variant="secondary">{items.filter(i => !i.isCompleted).length} prodotti</Badge>
+        </div>
+      <Accordion type="multiple" value={openCategories} onValueChange={setOpenCategories} className="w-full">
+        {groupedItems.map(([category, categoryItems]) => (
+          <AccordionItem value={category} key={category} className={cn(!openCategories.includes(category) && "opacity-50")}>
+            <AccordionTrigger className="text-base font-medium capitalize hover:no-underline">
+              <div className="flex items-center gap-2">
+                {!openCategories.includes(category) && <Check className="w-5 h-5 text-green-500"/>}
+                {category}
+                <Badge variant={openCategories.includes(category) ? "outline" : "default"}>{categoryItems.length}</Badge>
               </div>
+            </AccordionTrigger>
+            <AccordionContent>
               <div className="space-y-3">
                 {categoryItems.map((item) => (
-                  <ShoppingItemRow 
-                    key={item.id} 
-                    item={item} 
-                    isMarketMode={true} 
+                  <ShoppingItemRow
+                    key={item.id}
+                    item={item}
+                    isMarketMode={isMarketMode}
                     onPurchase={purchaseItemMutation.mutate}
                     onDelete={deleteItemMutation.mutate}
+                    onUpdate={updateItemMutation.mutate}
                   />
                 ))}
               </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <>
-          <div className="flex justify-between items-center px-2">
-            <h2 className="md3-title-medium">Da comprare</h2>
-            <span className="md3-label-large md3-secondary-container px-3 py-1 rounded-full">{activeItems.length} {activeItems.length === 1 ? 'prodotto' : 'prodotti'}</span>
-          </div>
-          <div className="space-y-3">
-            {activeItems.map((item) => (
-              <ShoppingItemRow 
-                key={item.id} 
-                item={item} 
-                isMarketMode={false} 
-                onPurchase={purchaseItemMutation.mutate}
-                onDelete={deleteItemMutation.mutate}
-              />
-            ))}
-          </div>
-        </>
-      )}
+            </AccordionContent>
+          </AccordionItem>
+        ))}
+      </Accordion>
     </div>
   );
 }

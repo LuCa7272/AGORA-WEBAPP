@@ -8,7 +8,7 @@ import {
   shoppingItems
 } from "@shared/schema";
 import { advancedMatcher } from './services/advanced-matching.js';
-import { generateSmartSuggestions, matchProductsToEcommerce, categorizeItem, generateAIShoppingList } from "./services/ai-provider";
+import { processItem, generateSmartSuggestions, matchProductsToEcommerce, generateAIShoppingList } from "./services/ai-provider";
 import { generateCartXML, createEcommerceCart, generateCarrefourUrl, generateEsselungaUrl } from "./services/ecommerce";
 import { geolocationService } from './services/geolocationService.js';
 import session from "express-session";
@@ -264,10 +264,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/lists/:listId/items", isAuthenticated, isListMember, async (req, res, next) => {
     try {
       const listId = parseInt(req.params.listId, 10);
-      const validatedData = insertShoppingItemSchema.parse({ ...req.body, listId });
-      if (!validatedData.category) {
-        validatedData.category = await categorizeItem(validatedData.name);
+      const rawName = req.body.name;
+
+      if (!rawName || typeof rawName !== 'string') {
+        return res.status(400).json({ message: "Il nome del prodotto è obbligatorio." });
       }
+
+      // Processa il testo per ottenere nome, quantità e categoria in una sola chiamata
+      const { name, quantity, category } = await processItem(rawName);
+
+      const validatedData = insertShoppingItemSchema.parse({
+        listId,
+        name,
+        quantity,
+        category,
+      });
+
       const newItem = await storage.createShoppingItem(validatedData);
       res.status(201).json(newItem);
     } catch (error) {
@@ -348,6 +360,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json({ success: true });
     } catch (error) {
         next(error);
+    }
+  });
+
+  app.put("/api/items/:itemId", isAuthenticated, isItemOwner, async (req, res, next) => {
+    try {
+      const itemId = parseInt(req.params.itemId, 10);
+      const { name, quantity } = req.body;
+
+      if (!name) {
+        return res.status(400).json({ message: "Il nome è obbligatorio per l'aggiornamento." });
+      }
+      
+      const currentItem = (req as any).item as ShoppingItem;
+      const dataToUpdate: Partial<Omit<ShoppingItem, 'id'>> = {
+        quantity: quantity || null,
+        name: name,
+      };
+
+      // Se il nome è cambiato, ricalcola la categoria
+      if (name !== currentItem.name) {
+        const { category } = await processItem(name);
+        dataToUpdate.category = category;
+      }
+
+      const [updatedItem] = await db.update(shoppingItems).set(dataToUpdate).where(eq(shoppingItems.id, itemId)).returning();
+      
+      res.json(updatedItem);
+    } catch (error) {
+      next(error);
     }
   });
   

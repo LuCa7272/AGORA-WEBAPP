@@ -1,5 +1,3 @@
-// FILE: client/src/components/smart-suggestions.tsx (VERSIONE CORRETTA E COMPLETA)
-
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Brain, Plus, Sparkles, ChefHat, Loader2 } from "lucide-react";
@@ -8,6 +6,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import type { Suggestion } from "@shared/schema";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { cn } from "@/lib/utils";
 
 interface AISuggestion {
   id: string;
@@ -39,17 +41,10 @@ export default function SmartSuggestions({ activeListId }: SmartSuggestionsProps
     },
     onSuccess: (data: AISuggestion[]) => {
       setAiSuggestions(data.map(item => ({ ...item, selected: true })));
-      toast({
-        title: "Lista generata",
-        description: `${data.length} prodotti suggeriti dall'AI`,
-      });
+      toast({ title: "Lista generata", description: `${data.length} prodotti suggeriti dall'AI` });
     },
     onError: (error: any) => {
-      toast({
-        title: "Errore",
-        description: error.message || "Impossibile generare la lista",
-        variant: "destructive",
-      });
+      toast({ title: "Errore", description: error.message || "Impossibile generare la lista", variant: "destructive" });
     },
   });
 
@@ -60,33 +55,19 @@ export default function SmartSuggestions({ activeListId }: SmartSuggestionsProps
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/suggestions"] });
-      toast({
-        title: "Suggerimenti generati",
-        description: "Nuovi suggerimenti basati sui tuoi acquisti",
-      });
+      toast({ title: "Suggerimenti generati", description: "Nuovi suggerimenti basati sui tuoi acquisti" });
     },
     onError: (error: any) => {
-      toast({
-        title: "Errore",
-        description: error.message || "Impossibile generare suggerimenti",
-        variant: "destructive",
-      });
+      toast({ title: "Errore", description: error.message || "Impossibile generare suggerimenti", variant: "destructive" });
     },
   });
 
   const addSelectedItemsMutation = useMutation({
     mutationFn: async (items: AISuggestion[]) => {
-      if (!activeListId) {
-        throw new Error("Nessuna lista attiva selezionata. Impossibile aggiungere i prodotti.");
-      }
-      
+      if (!activeListId) throw new Error("Nessuna lista attiva selezionata.");
       const selectedItems = items.filter(item => item.selected);
       const promises = selectedItems.map(item => 
-        apiRequest("POST", `/api/lists/${activeListId}/items`, {
-          name: item.name,
-          category: item.category,
-          listId: activeListId
-        })
+        apiRequest("POST", `/api/lists/${activeListId}/items`, { name: item.name, category: item.category, listId: activeListId })
       );
       await Promise.all(promises);
       return selectedItems.length;
@@ -95,299 +76,187 @@ export default function SmartSuggestions({ activeListId }: SmartSuggestionsProps
       queryClient.invalidateQueries({ queryKey: ["shoppingItems", activeListId] });
       setAiSuggestions([]);
       setRequirement("");
-      toast({
-        title: "Prodotti aggiunti",
-        description: `${count} prodotti aggiunti alla lista della spesa`,
-      });
+      toast({ title: "Prodotti aggiunti", description: `${count} prodotti aggiunti alla lista` });
     },
     onError: (error: any) => {
-      toast({
-        title: "Errore",
-        description: error.message || "Impossibile aggiungere i prodotti",
-        variant: "destructive",
-      });
+      toast({ title: "Errore", description: error.message || "Impossibile aggiungere i prodotti", variant: "destructive" });
     },
   });
 
   const acceptSuggestionMutation = useMutation({
     mutationFn: async (id: number) => {
-      if (!activeListId) {
-         throw new Error("Seleziona una lista prima di aggiungere un suggerimento.");
-      }
+      if (!activeListId) throw new Error("Seleziona una lista prima di aggiungere un suggerimento.");
       await apiRequest("POST", `/api/suggestions/${id}/accept`, { listId: activeListId });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/suggestions"] });
       queryClient.invalidateQueries({ queryKey: ["shoppingItems", activeListId] });
-      toast({
-        title: "Suggerimento aggiunto",
-        description: "Il prodotto è stato aggiunto alla lista",
-      });
+      toast({ title: "Suggerimento aggiunto", description: "Il prodotto è stato aggiunto alla lista" });
     },
     onError: (error: any) => {
-      toast({
-        title: "Errore",
-        description: error.message || "Impossibile aggiungere il suggerimento",
-        variant: "destructive",
-      });
+      toast({ title: "Errore", description: error.message || "Impossibile aggiungere il suggerimento", variant: "destructive" });
     },
   });
 
   const handleGenerateList = () => {
     if (!requirement.trim()) {
-      toast({
-        title: "Campo richiesto",
-        description: "Inserisci un'esigenza per generare la lista",
-        variant: "destructive",
-      });
+      toast({ title: "Campo richiesto", description: "Inserisci un'esigenza per generare la lista", variant: "destructive" });
       return;
     }
     generateAISuggestionsMutation.mutate(requirement.trim());
   };
 
   const toggleItemSelection = (id: string) => {
-    setAiSuggestions(prev => 
-      prev.map(item => 
-        item.id === id ? { ...item, selected: !item.selected } : item
-      )
-    );
+    setAiSuggestions(prev => prev.map(item => item.id === id ? { ...item, selected: !item.selected } : item));
   };
 
   const getConfidenceColor = (confidence: number) => {
-    if (confidence >= 0.8) return "bg-secondary text-white";
-    if (confidence >= 0.6) return "bg-accent text-white";
-    return "bg-gray-500 text-white";
+    if (confidence >= 0.8) return "bg-green-500 text-white";
+    if (confidence >= 0.6) return "bg-yellow-500 text-black";
+    return "bg-muted text-muted-foreground";
   };
 
-  const getConfidenceText = (confidence: number) => {
-    return `${Math.round(confidence * 100)}% probabilità`;
-  };
+  const getConfidenceText = (confidence: number) => `${Math.round(confidence * 100)}% prob.`;
 
   const selectedCount = aiSuggestions.filter(item => item.selected).length;
 
   return (
-    <div className="p-4 space-y-6">
-      <div className="md3-card-elevated p-6">
-        <div className="flex items-center gap-4 mb-6">
-          <div className="w-12 h-12 md3-primary-container rounded-3xl flex items-center justify-center md3-elevation-2">
-            <Brain className="w-6 h-6" />
-          </div>
-          <div>
-            <h2 className="md3-headline-small">Assistente AI Spesa</h2>
-            <p className="md3-body-medium opacity-70">Trasforma le tue esigenze in liste intelligenti</p>
-          </div>
-        </div>
-        
-        <div className="space-y-4">
-          <div>
-            <label className="block md3-body-medium font-medium mb-3">
-              Descrivi la tua esigenza
-            </label>
-            <Textarea
-              value={requirement}
-              onChange={(e) => setRequirement(e.target.value)}
-              placeholder="Es: Carbonara per 4 persone, Grigliata estiva per 8 persone, Colazione sana per una settimana, Aperitivo con amici..."
-              className="min-h-[120px] rounded-xl border-[color:var(--outline)] focus:border-[color:var(--primary)] md3-body-large"
-              style={{
-                backgroundColor: 'var(--surface-container-high)',
-                color: 'var(--on-surface)'
-              }}
-              disabled={generateAISuggestionsMutation.isPending}
-            />
-          </div>
-          
-          <div className="flex gap-3">
-            <button 
-              onClick={handleGenerateList}
-              disabled={generateAISuggestionsMutation.isPending || !requirement.trim()}
-              className="md3-button-filled flex-1 flex items-center justify-center gap-2 disabled:opacity-50"
-            >
-              {generateAISuggestionsMutation.isPending ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Generando lista...
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-4 h-4" />
-                  Genera Lista AI
-                </>
-              )}
-            </button>
-          </div>
-
-          <div className="border-t pt-4 mt-6">
-            <p className="md3-body-medium opacity-70 mb-3">Esempi rapidi:</p>
-            <div className="flex flex-wrap gap-2">
-              {["Pasta aglio e olio x4", "Colazione sana settimana", "Aperitivo amici"].map((example) => (
-                <button
-                  key={example}
-                  onClick={() => setRequirement(example)}
-                  disabled={generateAISuggestionsMutation.isPending}
-                  className="md3-button-tonal px-3 py-1 text-sm disabled:opacity-50"
-                >
-                  {example}
-                </button>
-              ))}
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
+              <Brain className="w-6 h-6" />
+            </div>
+            <div>
+              <CardTitle className="text-xl">Assistente AI Spesa</CardTitle>
+              <CardDescription>Trasforma le tue esigenze in liste.</CardDescription>
             </div>
           </div>
-        </div>
-      </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Textarea
+            value={requirement}
+            onChange={(e) => setRequirement(e.target.value)}
+            placeholder="Es: Carbonara per 4, Grigliata estiva, Colazione sana..."
+            className="min-h-[100px]"
+            disabled={generateAISuggestionsMutation.isPending}
+          />
+          <Button 
+            onClick={handleGenerateList}
+            disabled={generateAISuggestionsMutation.isPending || !requirement.trim()}
+            className="w-full"
+          >
+            {generateAISuggestionsMutation.isPending ? (
+              <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Generando...</>
+            ) : (
+              <><Sparkles className="w-4 h-4 mr-2" />Genera Lista AI</>
+            )}
+          </Button>
+        </CardContent>
+      </Card>
 
       {aiSuggestions.length > 0 && (
-        <div className="md3-card-elevated p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 md3-secondary-container rounded-lg flex items-center justify-center">
-                <ChefHat className="w-4 h-4" />
-              </div>
-              <h3 className="md3-title-large">Lista Generata dall'AI</h3>
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-lg flex items-center gap-2"><ChefHat className="w-5 h-5" /> Lista Generata</CardTitle>
+              <Badge variant="secondary">{selectedCount} / {aiSuggestions.length}</Badge>
             </div>
-            <div className="md3-secondary-container px-3 py-1 rounded-full">
-              <span className="md3-label-medium">
-                {selectedCount} di {aiSuggestions.length} selezionati
-              </span>
-            </div>
-          </div>
-          <div className="space-y-3">
+          </CardHeader>
+          <CardContent className="space-y-2">
             {aiSuggestions.map((item) => (
               <div 
                 key={item.id} 
-                className={`flex items-center gap-4 p-4 rounded-2xl transition-all duration-200 ${
-                  item.selected 
-                    ? 'md3-secondary-container md3-elevation-1' 
-                    : 'md3-surface-container-high hover:md3-elevation-1'
-                }`}
+                className={cn(
+                  "flex items-start gap-3 p-3 rounded-lg transition-all",
+                  item.selected ? 'bg-secondary/10' : 'hover:bg-muted'
+                )}
               >
-                <input
-                  type="checkbox"
+                <Checkbox
+                  id={`item-${item.id}`}
                   checked={item.selected}
-                  onChange={() => toggleItemSelection(item.id)}
-                  className="w-5 h-5 rounded-md"
+                  onCheckedChange={() => toggleItemSelection(item.id)}
+                  className="mt-1"
                 />
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h3 className="md3-body-large font-medium capitalize">{item.name}</h3>
-                    {item.quantity && (
-                      <span className="md3-tertiary-container px-2 py-1 rounded-full md3-label-small">
-                        {item.quantity}
-                      </span>
-                    )}
-                    <span className="md3-surface-container px-2 py-1 rounded-full md3-label-small">
-                      {item.category}
-                    </span>
+                <div className="flex-1 grid gap-1">
+                  <label htmlFor={`item-${item.id}`} className="font-medium capitalize cursor-pointer">{item.name}</label>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {item.quantity && <Badge variant="outline">{item.quantity}</Badge>}
+                    <Badge variant="outline">{item.category}</Badge>
                   </div>
-                  <p className="md3-body-medium opacity-70 mt-1">{item.reason}</p>
+                  <p className="text-sm text-muted-foreground">{item.reason}</p>
                 </div>
               </div>
             ))}
-            
-            <div className="flex gap-3 pt-6 border-t border-[color:var(--outline-variant)] mt-4">
-              <button
+            <div className="flex gap-2 pt-4 border-t mt-4">
+              <Button
                   onClick={() => addSelectedItemsMutation.mutate(aiSuggestions)}
                   disabled={selectedCount === 0 || addSelectedItemsMutation.isPending}
-                  className="md3-button-filled flex-1 flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="flex-1"
                 >
                   {addSelectedItemsMutation.isPending ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Aggiungendo...
-                    </>
+                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Aggiungendo...</>
                   ) : (
-                    <>
-                      <Plus className="w-4 h-4 mr-2" />
-                      Aggiungi {selectedCount} prodotti alla lista
-                    </>
+                    <><Plus className="w-4 h-4 mr-2" />Aggiungi {selectedCount} prodotti</>
                   )}
-              </button>
-              <button
-                  className="md3-button-text disabled:opacity-50"
-                  onClick={() => setAiSuggestions([])}
-                  disabled={addSelectedItemsMutation.isPending}
-                >
-                  Annulla
-                </button>
-              </div>
+              </Button>
+              <Button variant="ghost" onClick={() => setAiSuggestions([])} disabled={addSelectedItemsMutation.isPending}>Annulla</Button>
             </div>
-        </div>
+          </CardContent>
+        </Card>
       )}
 
-      <div className="md3-card-elevated p-6">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 md3-tertiary-container rounded-2xl flex items-center justify-center">
-            <Brain className="w-5 h-5" />
-          </div>
-          <h3 className="md3-title-large">Suggerimenti Basati sulla Cronologia</h3>
-        </div>
-        
-        <div className="space-y-4">
-          <button
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Suggerimenti dalla Cronologia</CardTitle>
+          <CardDescription>Basati sulla frequenza dei tuoi acquisti passati.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Button
             onClick={() => generateSuggestionsMutation.mutate()}
             disabled={generateSuggestionsMutation.isPending}
-            className="md3-button-outlined w-full flex items-center justify-center gap-2 disabled:opacity-50"
+            variant="outline"
+            className="w-full"
           >
             {generateSuggestionsMutation.isPending ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Generando...
-              </>
+              <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Analizzando...</>
             ) : (
-              <>
-                <Brain className="w-4 h-4" />
-                Genera Suggerimenti dalla Cronologia
-              </>
+              <><Brain className="w-4 h-4 mr-2" />Genera Nuovi Suggerimenti</>
             )}
-          </button>
+          </Button>
 
-            {isLoading ? (
-              <div className="space-y-3">
-                {Array.from({ length: 3 }, (_, i) => (
-                  <div key={i} className="bg-white rounded-lg border p-4">
-                    <div className="animate-pulse">
-                      <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
-                      <div className="h-3 bg-gray-200 rounded w-1/2"></div>
-                    </div>
+          {isLoading ? (
+            <div className="space-y-2">
+              {[...Array(3)].map((_, i) => <div key={i} className="h-12 bg-muted rounded-lg animate-pulse" />)}
+            </div>
+          ) : suggestions.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-4">Nessun suggerimento disponibile. Prova a generarne di nuovi!</p>
+          ) : (
+            <div className="space-y-2">
+              {suggestions.map((suggestion) => (
+                <div key={suggestion.id} className="border rounded-lg p-3 flex items-center justify-between gap-2">
+                  <div className="flex-1">
+                    <p className="font-medium capitalize">{suggestion.itemName}</p>
+                    <p className="text-sm text-muted-foreground">{suggestion.reasoning}</p>
                   </div>
-                ))}
-              </div>
-            ) : suggestions.length === 0 ? (
-              <div className="text-center py-8">
-                <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Brain className="w-8 h-8 text-gray-400" />
+                  <div className="flex items-center gap-2">
+                    <Badge className={cn("text-xs", getConfidenceColor(suggestion.confidence))}>{getConfidenceText(suggestion.confidence)}</Badge>
+                    <Button
+                      onClick={() => acceptSuggestionMutation.mutate(suggestion.id!)}
+                      disabled={acceptSuggestionMutation.isPending}
+                      size="sm"
+                      variant="secondary"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </div>
-                <h3 className="text-lg font-medium text-gray-900 mb-2">Nessun suggerimento</h3>
-                <p className="text-gray-500 mb-4">Genera suggerimenti basati sui tuoi acquisti precedenti</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {suggestions.map((suggestion) => (
-                  <div key={suggestion.id} className="bg-white rounded-lg border border-gray-200 p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center space-x-2">
-                          <h3 className="font-medium text-gray-900 capitalize">{suggestion.itemName}</h3>
-                          <span className={`px-2 py-1 text-xs rounded-full ${getConfidenceColor(suggestion.confidence)}`}>
-                            {getConfidenceText(suggestion.confidence)}
-                          </span>
-                        </div>
-                        <p className="text-sm text-gray-600 mt-1">{suggestion.reasoning}</p>
-                      </div>
-                      
-                      <Button
-                        onClick={() => acceptSuggestionMutation.mutate(suggestion.id!)}
-                        disabled={acceptSuggestionMutation.isPending}
-                        size="sm"
-                      >
-                        <Plus className="w-4 h-4 mr-1" />
-                        Aggiungi
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
