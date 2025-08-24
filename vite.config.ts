@@ -1,9 +1,13 @@
-// FILE: vite.config.ts (CON FIX PWA E HMR MANTENUTO)
+// FILE: vite.config.ts
 
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
 import { VitePWA } from 'vite-plugin-pwa';
+
+// --- CONFIGURAZIONE NGROK ---
+// Inserisci qui il tuo dominio statico di ngrok
+const ngrokDomain = "redfish-exact-reptile.ngrok-free.app";
 
 export default defineConfig({
   root: 'client',
@@ -16,7 +20,7 @@ export default defineConfig({
       manifest: {
         name: 'SmartCart - La Tua Lista della Spesa Intelligente',
         short_name: 'SmartCart',
-        description: 'Una lista della spesa intelligente che ti aiuta a fare la spesa piÃ¹ velocemente.',
+        description: 'Una lista della spesa intelligente che ti aiuta a fare la spesa più velocemente.',
         theme_color: '#ffffff',
         background_color: '#ffffff',
         display: 'standalone',
@@ -30,14 +34,11 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
-        // --- QUESTA È LA MODIFICA CHIAVE PER LA ROBUSTEZZA OFFLINE ---
         // Dice a Workbox di servire sempre /index.html quando una richiesta
-        // di navigazione (come un refresh di pagina) fallisce.
+        // di navigazione (es. refresh) fallisce, essenziale per la PWA.
         navigateFallback: '/index.html',
-        
         // Impedisce che le chiamate API vengano reindirizzate a index.html.
         navigateFallbackDenylist: [/^\/api/],
-        // --- FINE DELLA MODIFICA CHIAVE ---
         runtimeCaching: [
           {
             urlPattern: ({ url }) => url.pathname.startsWith('/api/'),
@@ -65,7 +66,19 @@ export default defineConfig({
   },
   
   server: {
-    // --- LA TUA CONFIGURazione HMR VIENE MANTENUTA ---
+    // Rende il server accessibile sulla rete locale (es. da telefono)
+    host: true,
+
+    // --- CONFIGURAZIONE PER NGROK ---
+    // Essenziale per far funzionare l'Hot Module Replacement (HMR)
+    // attraverso il tunnel di ngrok.
+    hmr: {
+      host: ngrokDomain,
+      protocol: 'wss',
+    },
+    // Aiuta Vite a riscrivere gli URL correttamente per il client
+    origin: `https://${ngrokDomain}`,
+    // --- FINE CONFIGURAZIONE NGROK ---
     
     proxy: {
       '/api': {

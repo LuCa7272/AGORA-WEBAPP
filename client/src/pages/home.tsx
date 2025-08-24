@@ -46,6 +46,23 @@ import { apiRequest } from "@/lib/queryClient";
 import { processOfflineQueue, getOfflineQueue } from "@/lib/offline-queue";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { ScrollArea } from "@/components/ui/scroll-area";
+
+// Funzione helper per calcolare la distanza
+function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371e3; // Raggio della Terra in metri
+  const radLat1 = lat1 * Math.PI/180;
+  const radLat2 = lat2 * Math.PI/180;
+  const deltaLat = (lat2-lat1) * Math.PI/180;
+  const deltaLon = (lon2-lon1) * Math.PI/180;
+
+  const a = Math.sin(deltaLat/2) * Math.sin(deltaLat/2) +
+            Math.cos(radLat1) * Math.cos(radLat2) *
+            Math.sin(deltaLon/2) * Math.sin(deltaLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+  return R * c; // in metri
+}
 
 const newListSchema = z.object({
   name: z.string().min(1, "Il nome della lista e' obbligatorio.").max(50, "Il nome non puo' superare i 50 caratteri."),
@@ -66,26 +83,26 @@ const MarketModeView = ({
   categoryOrder: string[];
   items: ShoppingItem[];
 }) => {
-  const totalItems = items.length;
-  const completedItems = items.filter(i => i.isCompleted).length;
+  const activeItems = items.filter(i => !i.isCompleted);
+  const completedItemsCount = items.length - activeItems.length;
 
   return (
-    <div className="flex flex-col h-full w-full bg-background">
-      <header className="border-b sticky top-0 z-40 bg-card p-3">
+    <div className="flex flex-col h-full w-full bg-slate-50">
+      <header className="border-b sticky top-0 z-40 bg-card p-3 shadow-sm">
         <div className="flex items-center justify-between gap-4">
-          <Button variant="ghost" size="icon" onClick={onExit}>
+          <Button variant="ghost" size="icon" onClick={onExit} className="flex-shrink-0">
             <XIcon className="w-5 h-5" />
           </Button>
-          <div className="text-center">
+          <div className="text-center truncate">
             <p className="text-sm font-medium text-muted-foreground">Modalità Spesa</p>
             {activeStore ? (
-              <p className="font-semibold flex items-center gap-1"><StoreIcon size={14}/>{activeStore.name}</p>
+              <p className="font-semibold flex items-center justify-center gap-1.5 truncate"><StoreIcon size={14}/>{activeStore.name}</p>
             ) : (
-              <p className="font-semibold flex items-center gap-1 text-muted-foreground"><StoreIcon size={14}/>Ordinamento Standard</p>
+              <p className="font-semibold flex items-center justify-center gap-1.5 text-muted-foreground"><StoreIcon size={14}/>Ordinamento Standard</p>
             )}
           </div>
-          <div className="text-sm font-semibold bg-secondary text-secondary-foreground rounded-full px-3 py-1 w-20 text-center">
-            {completedItems} / {totalItems}
+          <div className="text-sm font-semibold bg-green-500 text-white rounded-full px-3 py-1 w-20 text-center flex-shrink-0">
+            {completedItemsCount} / {items.length}
           </div>
         </div>
       </header>
@@ -116,6 +133,9 @@ export default function Home() {
   const [isCheckingIn, setIsCheckingIn] = useState(false);
   const [categoryOrder, setCategoryOrder] = useState<string[]>([]);
   
+  const [proposedStore, setProposedStore] = useState<Store | null>(null);
+  const [isConfirmationDialogOpen, setIsConfirmationDialogOpen] = useState(false);
+  
   const [isNicknameDialogOpen, setIsNicknameDialogOpen] = useState(false);
   const [isAddListDialogOpen, setIsAddListDialogOpen] = useState(false);
 
@@ -127,7 +147,6 @@ export default function Home() {
     enabled: !!user,
   });
 
-  // Query per gli item della lista attiva
   const { data: shoppingItems = [] } = useQuery<ShoppingItem[]>({
     queryKey: ["shoppingItems", activeListId],
     queryFn: () => apiRequest("GET", `/api/lists/${activeListId}/items`).then(res => res.json()),
@@ -189,25 +208,34 @@ export default function Home() {
     setIsCheckingIn(true);
     toast({ title: "Ricerca GPS in corso..." });
     try {
-      const position = await new Promise<GeolocationPosition>((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject));
-      const coords = import.meta.env.DEV ? { latitude: 45.4582, longitude: 9.1633 } : position.coords;
-      if(import.meta.env.DEV) toast({ title: "Modalita' Sviluppo", description: "Utilizzo coordinate di test." });
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 }));
+      const userCoords = position.coords;
       
-      const foundStores: Store[] = await apiRequest("POST", "/api/check-in", { latitude: coords.latitude, longitude: coords.longitude }).then(res => res.json());
+      const foundStores: Store[] = await apiRequest("POST", "/api/check-in", { latitude: userCoords.latitude, longitude: userCoords.longitude }).then(res => res.json());
       
       if (foundStores.length === 0) {
         toast({ title: "Nessun negozio trovato nelle vicinanze", duration: 5000 });
         setActiveStore(null);
         setCategoryOrder([]);
-      } else if (foundStores.length === 1) {
-        await handleStoreSelect(foundStores[0]);
+        return;
+      }
+      
+      const storesWithDistance = foundStores.map(store => ({
+        ...store,
+        distance: haversineDistance(userCoords.latitude, userCoords.longitude, store.latitude, store.longitude)
+      }));
+
+      const veryCloseStore = storesWithDistance.find(store => store.distance <= 50);
+
+      if (veryCloseStore) {
+        setProposedStore(veryCloseStore);
+        setIsConfirmationDialogOpen(true);
       } else {
-        setNearbyStores(foundStores);
+        setNearbyStores(storesWithDistance);
         setIsStoreSelectorOpen(true);
       }
     } catch (error: any) {
-      toast({ variant: "destructive", title: "Errore GPS", description: error.message });
-      setIsMarketMode(false);
+      toast({ variant: "destructive", title: "Errore GPS", description: error.message || "Impossibile ottenere la posizione." });
     } finally {
       setIsCheckingIn(false);
     }
@@ -215,6 +243,8 @@ export default function Home() {
 
   const handleStoreSelect = async (store: Store) => {
     setIsStoreSelectorOpen(false);
+    setIsConfirmationDialogOpen(false);
+    setProposedStore(null);
     setActiveStore(store);
     toast({ title: `Check-in effettuato!`, description: `Ottimizzazione per ${store.name}.` });
     try {
@@ -222,18 +252,44 @@ export default function Home() {
       if (newOrder?.length > 0) {
         setCategoryOrder(newOrder);
         toast({ title: "Lista ottimizzata!" });
+      } else {
+        setCategoryOrder([]);
       }
+      setIsMarketMode(true);
     } catch (error) {
       toast({ variant: "destructive", title: "Errore", description: "Impossibile caricare il layout del negozio." });
     }
   };
+  
+  const handleNoStoreSelect = () => {
+      setIsStoreSelectorOpen(false);
+      setActiveStore(null);
+      setCategoryOrder([]);
+      setIsMarketMode(true);
+  }
 
   const handleToggleMode = (newMode: boolean) => {
     if (isCheckingIn) return;
-    setIsMarketMode(newMode);
-    if (newMode && navigator.onLine) handleCheckIn();
-    else if (!newMode) { setActiveStore(null); setCategoryOrder([]); }
+
+    if (newMode) {
+      if (activeStore) {
+        setIsMarketMode(true);
+      } else if (navigator.onLine) {
+        handleCheckIn();
+      } else {
+        setIsMarketMode(true);
+      }
+    } else {
+      setIsMarketMode(false);
+    }
   };
+  
+  const exitMarketModeAndReset = () => {
+    setIsMarketMode(false);
+    setActiveStore(null);
+    setCategoryOrder([]);
+    setProposedStore(null);
+  }
 
   const tabs = useMemo(() => [
     { id: "lista", label: "Lista", icon: FileText },
@@ -262,10 +318,10 @@ export default function Home() {
     }
   };
 
-  if (isMarketMode) {
+  if (isMarketMode && activeListId) {
     return <MarketModeView 
-      onExit={() => handleToggleMode(false)} 
-      activeListId={activeListId!} 
+      onExit={exitMarketModeAndReset}
+      activeListId={activeListId} 
       activeStore={activeStore} 
       categoryOrder={categoryOrder}
       items={shoppingItems}
@@ -314,7 +370,6 @@ export default function Home() {
           </div>
         </header>
 
-        {/* --- MODIFICA CHIAVE QUI --- */}
         <main className="flex-1 overflow-y-auto pb-28">
           {activeTab === 'lista' ? (
              <div className={cn("p-4", "lg:grid lg:grid-cols-3 lg:gap-8")}>
@@ -357,23 +412,50 @@ export default function Home() {
       
       {user && (<UpdateNicknameDialog user={user} open={isNicknameDialogOpen} onOpenChange={setIsNicknameDialogOpen} />)}
       
+      {/* --- MODIFICA CHIAVE QUI --- */}
       <Dialog open={isStoreSelectorOpen} onOpenChange={setIsStoreSelectorOpen}>
+        <DialogContent className="max-w-lg w-full top-0 translate-y-0 mt-8 mb-4 flex flex-col">
+          <DialogHeader>
+              <DialogTitle>In quale negozio ti trovi?</DialogTitle>
+              <DialogDescription>Abbiamo trovato questi supermercati vicino a te. Selezionane uno per ottimizzare la tua lista.</DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="flex-1">
+              <div className="flex flex-col gap-2 pt-4 pr-4">
+                {nearbyStores.map(store => (
+                  <Button key={store.id} variant="outline" className="justify-start h-auto py-3" onClick={() => handleStoreSelect(store)}>
+                    <div className="flex items-center gap-3">
+                      <MapPin className="h-5 w-5 text-primary" />
+                      <div className="text-left">
+                        <p className="font-semibold">{store.name}</p>
+                        <p className="text-xs text-muted-foreground">{store.address}</p>
+                      </div>
+                    </div>
+                  </Button>
+                ))}
+              </div>
+          </ScrollArea>
+          <DialogFooter className="mt-4">
+            <Button variant="ghost" onClick={handleNoStoreSelect}>Nessuno di questi</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      <Dialog open={isConfirmationDialogOpen} onOpenChange={setIsConfirmationDialogOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>In quale negozio ti trovi?</DialogTitle><DialogDescription>Abbiamo trovato questi supermercati vicino a te. Selezionane uno per ottimizzare la tua lista.</DialogDescription></DialogHeader>
-          <div className="flex flex-col gap-2 pt-4">
-            {nearbyStores.map(store => (
-              <Button key={store.id} variant="outline" className="justify-start h-auto py-3" onClick={() => handleStoreSelect(store)}>
-                <div className="flex items-center gap-3">
-                  <MapPin className="h-5 w-5 text-primary" />
-                  <div className="text-left">
-                    <p className="font-semibold">{store.name}</p>
-                    <p className="text-xs text-muted-foreground">{store.address}</p>
-                  </div>
-                </div>
-              </Button>
-            ))}
-             <Button variant="ghost" onClick={() => { setIsStoreSelectorOpen(false); setActiveStore(null); setCategoryOrder([]); }}>Nessuno di questi</Button>
-          </div>
+          <DialogHeader>
+            <DialogTitle>Conferma Negozio</DialogTitle>
+            <DialogDescription>
+              Sembra che tu sia da **{proposedStore?.name}**. Vuoi usare il layout di questo negozio per ottimizzare la tua lista?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setIsConfirmationDialogOpen(false); setIsStoreSelectorOpen(true); }}>
+              No, scegli da una lista
+            </Button>
+            <Button onClick={() => proposedStore && handleStoreSelect(proposedStore)}>
+              Sì, conferma
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
       
