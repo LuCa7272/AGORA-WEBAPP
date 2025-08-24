@@ -1,3 +1,5 @@
+// FILE: server/services/lm-studio.ts
+
 import * as fs from "fs";
 import * as yaml from 'js-yaml';
 import OpenAI from "openai";
@@ -84,8 +86,19 @@ export async function generateAIShoppingList(requirement: string): Promise<any[]
     const client = getLMStudioClient();
     const availableCategories = getCategories();
 
+    // --- MODIFICA INIZIA QUI ---
+    // Aggiungiamo la logica per estrarre il numero di persone
+    const peopleMatch = requirement.match(/\bper\s+(\d+)\b/i);
+    const peopleCount = peopleMatch ? peopleMatch[1] : "non specificato";
+    console.log(`👨‍👩‍👧‍👦 Numero di persone estratto dalla richiesta (LM Studio): ${peopleCount}`);
+    // --- MODIFICA FINISCE QUI ---
+
     const { finalPrompt, parameters } = promptManager.getPrompt('generateListFromRequirement', {
       requirement: requirement,
+      // --- MODIFICA INIZIA QUI ---
+      // Passiamo la nuova variabile al prompt manager
+      peopleCount: peopleCount,
+      // --- MODIFICA FINISCE QUI ---
       categories: availableCategories.join('\n- ')
     });
 

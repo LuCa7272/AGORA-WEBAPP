@@ -1,35 +1,24 @@
-- Frutta_fresca
-- Verdure_fresche
-- Erbe_aromatiche
-- Carne fresca
-- Pesce fresco
-- Salumeria 
-- Formaggi
-- Latte_&_derivati
-- Yogurt
-- Caffè e The
-- Uova_fresche
-- Panetteria fresca 
-- Pasta secca
-- Riso e cereali
-- Pasti_pronti_a_base_di_pasta
-- Cereali per colazione
-- Barrette_energetiche
-- Marmellate e Spalmabili
-- Patatine e snack_salati
-- Cioccolato e confetteria
-- Gelati
-- Biscotti e dolcetti
-- Oli e aceti
-- Salse 
-- Spezie erbe essiccate
-- Salse_per_pasta
-- Prodotti surgelati
-- Acqua_minerale
-- Succo_di_frutta
-- Bevande_analcoliche
-- Vini e alcolici
-- Birre 
-- Detergenti casa
-- Cura persona
+# FILE: server/config/categories.yaml
 
+- Frutta e Verdura
+- Pane e Panificati
+- Carne
+- Pesce
+- Salumi e Formaggi
+- Latte, Uova e Latticini
+- Pasta, Riso e Cereali
+- Olio e Condimenti
+- Legumi, Farine e Conserve
+- Colazione e Dolciumi
+- Snack Salati
+- Acqua e Bevande
+- Vini, Birre e Liquori
+- Surgelati e Gelati
+- Gastronomia e Piatti Pronti
+- Prodotti per l'Infanzia
+- Prodotti per Animali
+- Igiene e Cura Persona
+- Cosmetici
+- Pulizia e Cura Casa
+- Casalinghi e Bazar
+- Tabacchi e Altri Servizi

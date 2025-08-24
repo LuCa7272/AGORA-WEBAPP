@@ -1,3 +1,5 @@
+// FILE: client/src/pages/home.tsx
+
 import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
@@ -312,7 +314,8 @@ export default function Home() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto">
+        {/* --- MODIFICA CHIAVE QUI --- */}
+        <main className="flex-1 overflow-y-auto pb-28">
           {activeTab === 'lista' ? (
              <div className={cn("p-4", "lg:grid lg:grid-cols-3 lg:gap-8")}>
                 <div className="lg:col-span-2">

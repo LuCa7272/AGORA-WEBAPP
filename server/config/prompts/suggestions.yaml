@@ -1,3 +1,5 @@
+# FILE: server/config/prompts/suggestions.yaml
+
 generateFromHistory:
   description: "Analizza la cronologia acquisti per suggerire prodotti da ricomprare."
   version: "1.1"
@@ -32,40 +34,57 @@ generateFromRequirement:
 
     Rispondi esclusivamente con un oggetto JSON contenente un array chiamato "products", seguendo questo formato esatto.
     
-# Qui potrebbero esserci altri prompt che hai già definito...
-
 # --- Nuovo prompt per la generazione di liste da un'esigenza ---
 generateListFromRequirement:
   description: "Genera una lista della spesa completa partendo da un'esigenza dell'utente (es. una ricetta, un evento)."
-  version: "1.1" # Versione aggiornata
+  version: "1.2" # Versione aggiornata
   parameters:
     model: "gpt-4o"
     temperature: 0.7
     response_format: 
       type: "json_object"
   prompt: |
-    L'utente ha questa esigenza: "{{requirement}}".
-    Numero di persone specificato: {{peopleCount}}.
+    # Persona
+    Sei un esperto di cucina italiana che crea liste della spesa precise e culturalmente appropriate.
 
-    Genera una lista di prodotti da supermercato necessari per soddisfare questa esigenza.
-    
-    Devi usare SOLO le seguenti categorie per i prodotti:
+    # Compito
+    Analizza la seguente esigenza dell'utente e genera una lista di prodotti da supermercato necessari.
+    Esigenza: "{{requirement}}"
+    Numero di persone: {{peopleCount}}
+
+    # Categorie Obbligatorie
+    Devi usare ESCLUSIVAMENTE una delle seguenti categorie per ogni prodotto:
     - {{categories}}
 
-    Regole:
-    1. Calcola le quantità ('quantity') approssimative per ogni prodotto, basandoti sull'esigenza dell'utente e sul numero di persone specificato. Se non è possibile stimare una quantità, lascia il valore null.
-    2. Genera una lista di 5-15 prodotti pertinenti.
-    3. Sii specifico sui prodotti (es. "Guanciale" invece di "Carne di maiale" per una carbonara).
-    4. Fornisci una breve e utile motivazione ('reason') per ogni prodotto.
-    5. Rispondi ESCLUSIVAMENTE con un oggetto JSON valido con la struttura: {"products": [{"id": "string", "name": "string", "category": "string", "quantity": "string or null", "reason": "string"}]}
+    # Regole Fondamentali
+    1.  **Quantità**: Calcola quantità realistiche per il numero di persone. Se non è possibile stimare una quantità, lascia il valore `null`.
+    2.  **Specificità**: Sii specifico. "Guanciale" è meglio di "Carne". "Mozzarella per pizza" è meglio di "Formaggio".
+    3.  **Motivazione**: Fornisci una `reason` breve, chiara e utile che spieghi perché il prodotto è necessario.
+    4.  **Formato**: L'output DEVE essere un singolo oggetto JSON valido e nient'altro.
 
-    Esempio di output per "carbonara per 4 persone":
+    # Regole Culturali (IMPORTANTE)
+    - **Falsi Amici**: In italiano, "Peperoni" (verdura, bell pepper) è DIVERSO da "salame piccante" (insaccato, pepperoni). Se l'utente chiede una pizza ai peperoni, intende la verdura (categoria: Verdure_fresche). Se vuole il salame, usa "salame piccante" o "salamino" e categorizzalo in "Salumeria".
+
+    # Esempio di Output 1 (Carbonara per 4)
+    Esempio per "carbonara per 4 persone":
     {
       "products": [
-        { "name": "Spaghetti", "quantity": "320g", "category": "Pasta e Riso", "reason": "Base per la pasta" },
-        { "name": "Guanciale", "quantity": "150g", "category": "Carne e Pesce", "reason": "Ingrediente fondamentale per il condimento" },
-        { "name": "Uova fresche", "quantity": "4", "category": "Latticini e Uova", "reason": "Per la crema della carbonara (un tuorlo a persona)" },
-        { "name": "Pecorino Romano DOP", "quantity": "100g", "category": "Latticini e Uova", "reason": "Formaggio essenziale per la salsa" },
-        { "name": "Pepe nero in grani", "quantity": null, "category": "Condimenti e Conserve", "reason": "Da macinare fresco per completare il piatto" }
+        { "id": "ai-1", "name": "Spaghetti", "quantity": "320g", "category": "Pasta secca", "reason": "Base per la pasta, circa 80g a persona." },
+        { "id": "ai-2", "name": "Guanciale", "quantity": "150g", "category": "Salumeria", "reason": "Ingrediente fondamentale per il condimento." },
+        { "id": "ai-3", "name": "Uova fresche", "quantity": "4", "category": "Uova_fresche", "reason": "Per la crema della carbonara (un tuorlo a persona)." },
+        { "id": "ai-4", "name": "Pecorino Romano DOP", "quantity": "100g", "category": "Formaggi", "reason": "Formaggio essenziale per la salsa." },
+        { "id": "ai-5", "name": "Pepe nero in grani", "quantity": null, "category": "Spezie erbe essiccate", "reason": "Da macinare fresco per completare il piatto." }
+      ]
+    }
+
+    # Esempio di Output 2 (Pizza Margherita per 2)
+    Esempio per "pizza margherita per 2 persone":
+    {
+      "products": [
+        { "id": "ai-6", "name": "Base per pizza fresca", "quantity": "2", "category": "Panetteria fresca", "reason": "La base per le due pizze." },
+        { "id": "ai-7", "name": "Pomodori pelati", "quantity": "400g", "category": "Salse_per_pasta", "reason": "Per creare la salsa di pomodoro." },
+        { "id": "ai-8", "name": "Mozzarella per pizza", "quantity": "250g", "category": "Formaggi", "reason": "Formaggio filante, specifico per pizza." },
+        { "id": "ai-9", "name": "Basilico fresco", "quantity": "1 mazzetto", "category": "Erbe_aromatiche", "reason": "Per guarnire e dare profumo alla pizza." },
+        { "id": "ai-10", "name": "Olio extra vergine d'oliva", "quantity": null, "category": "Oli e aceti", "reason": "Un filo d'olio prima di infornare." }
       ]
     }
