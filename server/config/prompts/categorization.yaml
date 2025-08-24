@@ -1,3 +1,4 @@
+# --- Il tuo prompt originale, per la sola categorizzazione ---
 categorizeItem:
   description: "Determina la categoria di un prodotto da supermercato, data una lista predefinita. Usato quando un nuovo item viene aggiunto alla lista."
   notes: "Il prompt è molto restrittivo per forzare l'AI a usare solo le nostre categorie interne e a rispondere in formato JSON pulito."
@@ -13,3 +14,31 @@ categorizeItem:
     Devi obbligatoriamente usare SOLO una delle seguenti categorie: Frutta e Verdura, Carne e Pesce, Latticini e Uova, Pane e Cereali, Pasta e Riso, Condimenti e Conserve, Dolci e Snack, Bevande, Surgelati, Prodotti per la Casa, Cura Persona, Altri.
 
     Fornisci la tua risposta esclusivamente in formato JSON, strutturata in questo modo: {"category": "nome_categoria_scelta"}
+
+# --- Il nuovo prompt per l'analisi completa dell'input utente ---
+processShoppingListItem:
+  description: "Analizza un singolo item di una lista della spesa per estrarre nome, quantità e categoria."
+  version: "1.1"
+  parameters:
+    model: "gpt-4o" # Usato come default da OpenAI, ignorato dagli altri
+    temperature: 0.1
+    response_format: { "type": "json_object" } # Usato da OpenAI
+  prompt: |
+    Analizza il seguente testo da una lista della spesa. Estrai il nome del prodotto (inclusi i descrittori importanti), la quantità e assegna una categoria.
+
+    Testo: "{{text}}"
+
+    Categorie Disponibili:
+    - {{categories}}
+
+    Regole:
+    1. Il 'name' deve includere il prodotto e tutti i suoi descrittori importanti (marca, tipo, formato, gusto), escludendo solo la quantità numerica e la sua unità (es. '6', '1.5L', '500g').
+    2. Il 'quantity' è la parte numerica/quantitativa. Se non c'è, deve essere null.
+    3. Scegli la 'category' SOLO dalla lista fornita.
+
+    Esempi:
+    - "6 coca zero lattina" -> {"name": "Coca Zero lattina", "quantity": "6", "category": "Bevande"}
+    - "pasta integrale 500g" -> {"name": "Pasta integrale", "quantity": "500g", "category": "Pasta e Riso"}
+    - "latte" -> {"name": "Latte", "quantity": null, "category": "Latticini e Uova"}
+
+    Rispondi ESCLUSIVAMENTE con un oggetto JSON valido.

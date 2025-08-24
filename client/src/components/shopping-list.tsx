@@ -7,14 +7,23 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import type { ShoppingItem } from "@shared/schema";
 import { useSwipeable } from "react-swipeable";
-import { useAuth } from "@/hooks/use-auth";
-import { addPurchaseToOfflineQueue, addDeleteToOfflineQueue } from "@/lib/offline-queue";
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -46,9 +55,17 @@ const ShoppingItemRow = ({
   const [editedQuantity, setEditedQuantity] = useState(item.quantity || "");
 
   const handleSave = () => {
-    onUpdate({ id: item.id, name: editedName, quantity: editedQuantity });
-    setIsEditing(false);
+    if (editedName.trim()) {
+      onUpdate({ id: item.id!, name: editedName.trim(), quantity: editedQuantity.trim() || null });
+      setIsEditing(false);
+    }
   };
+  
+  const handleCancel = () => {
+    setEditedName(item.name);
+    setEditedQuantity(item.quantity || "");
+    setIsEditing(false);
+  }
 
   const handlers = useSwipeable({
     onSwipedLeft: () => isMarketMode && onPurchase(item),
@@ -60,10 +77,22 @@ const ShoppingItemRow = ({
     return (
       <Card>
         <CardContent className="p-3 space-y-2">
-          <Input value={editedName} onChange={(e) => setEditedName(e.target.value)} placeholder="Nome prodotto" className="h-10" />
-          <Input value={editedQuantity} onChange={(e) => setEditedQuantity(e.target.value)} placeholder="Quantità (es. 1kg, 6x)" className="h-10" />
+          <Input 
+            value={editedName} 
+            onChange={(e) => setEditedName(e.target.value)} 
+            placeholder="Nome prodotto" 
+            className="h-10" 
+            onKeyDown={(e) => e.key === 'Enter' && handleSave()}
+          />
+          <Input 
+            value={editedQuantity} 
+            onChange={(e) => setEditedQuantity(e.target.value)} 
+            placeholder="Quantità (es. 1kg, 6x)" 
+            className="h-10" 
+            onKeyDown={(e) => e.key === 'Enter' && handleSave()}
+          />
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="ghost" size="sm" onClick={() => setIsEditing(false)}><X className="w-4 h-4 mr-1"/>Annulla</Button>
+            <Button variant="ghost" size="sm" onClick={handleCancel}><X className="w-4 h-4 mr-1"/>Annulla</Button>
             <Button size="sm" onClick={handleSave}><Save className="w-4 h-4 mr-1"/>Salva</Button>
           </div>
         </CardContent>
@@ -106,7 +135,6 @@ const ShoppingItemRow = ({
 export default function ShoppingList({ isMarketMode, activeListId, activeStoreId, categoryOrder }: ShoppingListProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const { user } = useAuth();
   const [openCategories, setOpenCategories] = useState<string[]>([]);
 
   const { data: items = [], isLoading } = useQuery<ShoppingItem[]>({
@@ -119,8 +147,9 @@ export default function ShoppingList({ isMarketMode, activeListId, activeStoreId
     enabled: !!activeListId,
   });
 
+  const activeItems = items.filter(item => !item.isCompleted);
+
   const groupedItems = useMemo(() => {
-    const activeItems = items.filter(item => !item.isCompleted);
     return Object.entries(
       activeItems.reduce((groups, item) => {
         const category = item.category || "Senza Categoria";
@@ -140,7 +169,7 @@ export default function ShoppingList({ isMarketMode, activeListId, activeStoreId
       if (catB === "Senza Categoria") return -1;
       return catA.localeCompare(catB);
     });
-  }, [items, isMarketMode, categoryOrder]);
+  }, [activeItems, isMarketMode, categoryOrder]);
 
   useEffect(() => {
     const newCategories = groupedItems.map(([category]) => category);
@@ -155,7 +184,10 @@ export default function ShoppingList({ isMarketMode, activeListId, activeStoreId
       const { id, ...updateData } = data;
       return apiRequest("PUT", `/api/items/${id}`, updateData);
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["shoppingItems", activeListId] }),
+    onSuccess: () => {
+      toast({ title: "Prodotto aggiornato!" });
+      queryClient.invalidateQueries({ queryKey: ["shoppingItems", activeListId] });
+    },
     onError: (error: any) => toast({ title: "Errore", description: error.message || "Impossibile aggiornare il prodotto", variant: "destructive" }),
   });
 
@@ -169,18 +201,14 @@ export default function ShoppingList({ isMarketMode, activeListId, activeStoreId
   });
 
   const purchaseItemMutation = useMutation({
-    mutationFn: (itemToPurchase: ShoppingItem) => apiRequest("POST", `/api/items/${itemToPurchase.id}/purchase`, { storeId: activeStoreId }),
+    mutationFn: (itemToPurchase: ShoppingItem) => apiRequest("POST", `/api/items/${itemToPurchase.id!}/purchase`, { storeId: activeStoreId }),
     onMutate: async (itemToPurchase: ShoppingItem) => {
       await queryClient.cancelQueries({ queryKey: ["shoppingItems", activeListId] });
       const previousItems = queryClient.getQueryData<ShoppingItem[]>(["shoppingItems", activeListId]) || [];
-      
       if (isMarketMode) {
         const isLastItemInCategory = previousItems.filter(item => item.category === itemToPurchase.category && !item.isCompleted).length === 1;
-        if (isLastItemInCategory) {
-          setOpenCategories(prev => prev.filter(cat => cat !== itemToPurchase.category));
-        }
+        if (isLastItemInCategory) { setOpenCategories(prev => prev.filter(cat => cat !== itemToPurchase.category)); }
       }
-
       queryClient.setQueryData<ShoppingItem[]>(["shoppingItems", activeListId], old => old ? old.filter(item => item.id !== itemToPurchase.id) : []);
       return { previousItems };
     },
@@ -191,16 +219,25 @@ export default function ShoppingList({ isMarketMode, activeListId, activeStoreId
       queryClient.invalidateQueries({ queryKey: ["history", activeListId] });
     },
     onError: (err, item, context) => {
-      if (context?.previousItems) {
-        queryClient.setQueryData(["shoppingItems", activeListId], context.previousItems);
-      }
+      if (context?.previousItems) { queryClient.setQueryData(["shoppingItems", activeListId], context.previousItems); }
       toast({ title: "Errore di Sincronizzazione", variant: "destructive" });
+    },
+  });
+
+  const clearListMutation = useMutation({
+    mutationFn: () => apiRequest("DELETE", `/api/lists/${activeListId}/items`),
+    onSuccess: () => {
+      toast({ title: "Lista svuotata!", description: "Tutti i prodotti sono stati rimossi." });
+      queryClient.invalidateQueries({ queryKey: ["shoppingItems", activeListId] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Errore", description: error.message || "Impossibile svuotare la lista.", variant: "destructive" });
     },
   });
 
   if (isLoading) return <div className="flex justify-center items-center p-8"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
 
-  if (groupedItems.length === 0 && !isLoading) return (
+  if (activeItems.length === 0 && !isLoading) return (
     <div className="text-center py-16 px-4">
       <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mx-auto mb-6"><ShoppingBasket className="w-10 h-10 text-muted-foreground" /></div>
       <h3 className="text-xl font-semibold mb-3">Lista completata!</h3>
@@ -211,9 +248,35 @@ export default function ShoppingList({ isMarketMode, activeListId, activeStoreId
   return (
     <div className="space-y-4 pt-4">
        <div className="flex justify-between items-center px-2">
-            <h2 className="text-lg font-semibold">{isMarketMode ? "Modalità Spesa" : "Da Comprare"}</h2>
-            <Badge variant="secondary">{items.filter(i => !i.isCompleted).length} prodotti</Badge>
-        </div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-semibold">{isMarketMode ? "Modalità Spesa" : "Da Comprare"}</h2>
+              <Badge variant="secondary">{activeItems.length} prodotti</Badge>
+            </div>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="ghost" size="icon" title="Svuota lista" className="h-8 w-8 text-muted-foreground" disabled={activeItems.length === 0}>
+                  <Trash2 className="w-4 h-4" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Sei sicuro di voler svuotare la lista?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Questa azione è irreversibile. Tutti i {activeItems.length} prodotti verranno rimossi permanentemente.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Annulla</AlertDialogCancel>
+                  <AlertDialogAction 
+                    onClick={() => clearListMutation.mutate()}
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  >
+                    Svuota Lista
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+       </div>
       <Accordion type="multiple" value={openCategories} onValueChange={setOpenCategories} className="w-full">
         {groupedItems.map(([category, categoryItems]) => (
           <AccordionItem value={category} key={category} className={cn(!openCategories.includes(category) && "opacity-50")}>

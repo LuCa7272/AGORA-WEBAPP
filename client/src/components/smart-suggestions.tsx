@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Brain, Plus, Sparkles, ChefHat, Loader2 } from "lucide-react";
+import { Brain, Plus, Sparkles, ChefHat, Loader2, Lightbulb } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
@@ -34,20 +34,7 @@ export default function SmartSuggestions({ activeListId }: SmartSuggestionsProps
     queryKey: ["/api/suggestions"],
   });
 
-  const generateAISuggestionsMutation = useMutation({
-    mutationFn: async (requirement: string) => {
-      const response = await apiRequest("POST", "/api/ai-suggestions", { requirement });
-      return response.json();
-    },
-    onSuccess: (data: AISuggestion[]) => {
-      setAiSuggestions(data.map(item => ({ ...item, selected: true })));
-      toast({ title: "Lista generata", description: `${data.length} prodotti suggeriti dall'AI` });
-    },
-    onError: (error: any) => {
-      toast({ title: "Errore", description: error.message || "Impossibile generare la lista", variant: "destructive" });
-    },
-  });
-
+  // --- FIX: AGGIUNTA LA MUTAZIONE MANCANTE ---
   const generateSuggestionsMutation = useMutation({
     mutationFn: async () => {
       const response = await apiRequest("POST", "/api/suggestions/generate");
@@ -62,12 +49,31 @@ export default function SmartSuggestions({ activeListId }: SmartSuggestionsProps
     },
   });
 
+  const generateAISuggestionsMutation = useMutation({
+    mutationFn: async (requirement: string) => {
+      const response = await apiRequest("POST", "/api/ai-suggestions", { requirement });
+      return response.json();
+    },
+    onSuccess: (data: AISuggestion[]) => {
+      setAiSuggestions(data.map(item => ({ ...item, selected: true })));
+      toast({ title: "Lista generata", description: `${data.length} prodotti suggeriti dall'AI` });
+    },
+    onError: (error: any) => {
+      toast({ title: "Errore", description: error.message || "Impossibile generare la lista", variant: "destructive" });
+    },
+  });
+
   const addSelectedItemsMutation = useMutation({
     mutationFn: async (items: AISuggestion[]) => {
       if (!activeListId) throw new Error("Nessuna lista attiva selezionata.");
       const selectedItems = items.filter(item => item.selected);
       const promises = selectedItems.map(item => 
-        apiRequest("POST", `/api/lists/${activeListId}/items`, { name: item.name, category: item.category, listId: activeListId })
+        apiRequest("POST", `/api/lists/${activeListId}/items`, { 
+            name: item.name, 
+            quantity: item.quantity || null,
+            category: item.category, 
+            listId: activeListId 
+        })
       );
       await Promise.all(promises);
       return selectedItems.length;
@@ -126,7 +132,7 @@ export default function SmartSuggestions({ activeListId }: SmartSuggestionsProps
         <CardHeader>
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
-              <Brain className="w-6 h-6" />
+              <Lightbulb className="w-6 h-6" />
             </div>
             <div>
               <CardTitle className="text-xl">Assistente AI Spesa</CardTitle>
@@ -222,7 +228,7 @@ export default function SmartSuggestions({ activeListId }: SmartSuggestionsProps
             {generateSuggestionsMutation.isPending ? (
               <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Analizzando...</>
             ) : (
-              <><Brain className="w-4 h-4 mr-2" />Genera Nuovi Suggerimenti</>
+              <><Lightbulb className="w-4 h-4 mr-2" />Genera Nuovi Suggerimenti</>
             )}
           </Button>
 

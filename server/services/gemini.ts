@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as yaml from 'js-yaml';
 import { GoogleGenAI } from "@google/genai";
+import { promptManager } from './prompt-manager.js';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
@@ -20,53 +21,30 @@ function getCategories(): string[] {
       }
     } catch (e) {
       console.error("Errore durante la lettura di server/config/categories.yaml:", e);
-      // Fallback a una lista di default se il file manca o è corrotto
       categories = ['Frutta e Verdura', 'Carne e Pesce', 'Latticini e Uova', 'Pane e Cereali', 'Pasta e Riso', 'Condimenti e Conserve', 'Dolci e Snack', 'Bevande', 'Surgelati', 'Prodotti per la Casa', 'Cura Persona', 'Altri'];
-      console.warn(`⚠️ Utilizzo della lista di categorie di fallback.`);
+      console.warn(`⚠️  Utilizzo della lista di categorie di fallback.`);
     }
   }
   return categories;
 }
 
-// Carica le categorie all'avvio del modulo
 getCategories();
 
-// --- FUNZIONE UNIFICATA ---
+// --- FUNZIONI SPECIFICHE PER GEMINI ---
 
-export async function processItemText(text: string): Promise<{ name: string; quantity: string | null; category: string }> {
+export async function processItem(text: string): Promise<{ name: string; quantity: string | null; category: string }> {
     const availableCategories = getCategories();
-    const prompt = `Analizza il seguente testo da una lista della spesa. Estrai il nome pulito del prodotto, la sua quantità (se presente) e assegnarlo a una delle categorie fornite.
-
-Testo: "${text}"
-
-Categorie Disponibili:
-${availableCategories.map(c => `- ${c}`).join('\n')}
-
-Regole:
-1. Estrai il nome del prodotto normalizzandolo (es. maiuscole, singolare/plurale).
-2. Estrai la quantità come stringa (es. "6", "1.5L", "500g"). Se non c'è una quantità esplicita, il valore deve essere null.
-3. Scegli la categoria più appropriata SOLO dalla lista "Categorie Disponibili".
-4. Il nome del prodotto NON deve contenere la quantità.
-
-Esempi:
-- "6 uova" -> { "name": "Uova", "quantity": "6", "category": "Latticini e Uova" }
-- "latte 1.5L" -> { "name": "Latte", "quantity": "1.5L", "category": "Latticini e Uova" }
-- "Caffè" -> { "name": "Caffè", "quantity": null, "category": "Bevande" }
-
-Rispondi SOLO con un oggetto JSON valido con questa esatta struttura:
-{
-  "name": "nome prodotto pulito",
-  "quantity": "quantità o null",
-  "category": "una delle categorie disponibili"
-}`;
+    const { finalPrompt } = promptManager.getPrompt('processShoppingListItem', {
+      text: text,
+      categories: availableCategories.join('\n- '),
+    });
 
     try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-        });
-        const result = response.text || '{}';
-        const cleanedResult = result.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+        const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const result = await model.generateContent(finalPrompt);
+        const response = await result.response;
+        const responseText = response.text();
+        const cleanedResult = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
         const parsed = JSON.parse(cleanedResult);
 
         const name = parsed.name || text;
@@ -74,13 +52,36 @@ Rispondi SOLO con un oggetto JSON valido con questa esatta struttura:
         const category = availableCategories.includes(parsed.category) ? parsed.category : 'Altri';
 
         return { name, quantity, category };
-
     } catch (error) {
-        console.error('Errore in processItemText con Gemini:', error);
-        // Fallback in caso di errore AI
+        console.error('Errore in processItem con Gemini:', error);
         return { name: text, quantity: null, category: 'Altri' };
     }
 }
 
-// Le altre funzioni (generateSmartSuggestions, etc.) rimangono qui se necessario, ma le funzioni di categorizzazione e estrazione sono ora unificate.
-// Per pulizia, le funzioni non più utilizzate sono state rimosse.
+// --- NUOVA FUNZIONE IMPLEMENTATA PER GEMINI ---
+export async function generateAIShoppingList(requirement: string): Promise<any[]> {
+  try {
+    const availableCategories = getCategories();
+    const model = ai.getGenerativeModel({ model: "gemini-1.5-pro" }); // Usiamo un modello più potente per questo task
+
+    const { finalPrompt } = promptManager.getPrompt('generateListFromRequirement', {
+      requirement: requirement,
+      categories: availableCategories.join('\n- ')
+    });
+
+    const result = await model.generateContent(finalPrompt);
+    const response = await result.response;
+    const content = response.text();
+
+    if (!content) throw new Error('No response from Gemini');
+    
+    const cleanedResult = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    const parsed = JSON.parse(cleanedResult);
+    
+    return (parsed.products || []).map((p: any, i: number) => ({ ...p, id: p.id || `ai-${Date.now()}-${i}`, selected: true }));
+
+  } catch (error) {
+    console.error('Error generating AI shopping list with Gemini:', error);
+    throw new Error('Impossibile generare la lista AI con Gemini');
+  }
+}

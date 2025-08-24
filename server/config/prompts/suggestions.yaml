@@ -31,3 +31,41 @@ generateFromRequirement:
     Per ogni prodotto, fornisci un nome, una categoria tra quelle disponibili (Frutta e Verdura, Latticini, Pane e Cereali, Bevande, Uova, Carne e Pesce, Dolci, Surgelati, Casa e Cura, Altri), una quantità suggerita (es. '500g', '1L', '2 confezioni') e una breve motivazione.
 
     Rispondi esclusivamente con un oggetto JSON contenente un array chiamato "products", seguendo questo formato esatto.
+    
+# Qui potrebbero esserci altri prompt che hai già definito...
+
+# --- Nuovo prompt per la generazione di liste da un'esigenza ---
+generateListFromRequirement:
+  description: "Genera una lista della spesa completa partendo da un'esigenza dell'utente (es. una ricetta, un evento)."
+  version: "1.1" # Versione aggiornata
+  parameters:
+    model: "gpt-4o"
+    temperature: 0.7
+    response_format: 
+      type: "json_object"
+  prompt: |
+    L'utente ha questa esigenza: "{{requirement}}".
+    Numero di persone specificato: {{peopleCount}}.
+
+    Genera una lista di prodotti da supermercato necessari per soddisfare questa esigenza.
+    
+    Devi usare SOLO le seguenti categorie per i prodotti:
+    - {{categories}}
+
+    Regole:
+    1. Calcola le quantità ('quantity') approssimative per ogni prodotto, basandoti sull'esigenza dell'utente e sul numero di persone specificato. Se non è possibile stimare una quantità, lascia il valore null.
+    2. Genera una lista di 5-15 prodotti pertinenti.
+    3. Sii specifico sui prodotti (es. "Guanciale" invece di "Carne di maiale" per una carbonara).
+    4. Fornisci una breve e utile motivazione ('reason') per ogni prodotto.
+    5. Rispondi ESCLUSIVAMENTE con un oggetto JSON valido con la struttura: {"products": [{"id": "string", "name": "string", "category": "string", "quantity": "string or null", "reason": "string"}]}
+
+    Esempio di output per "carbonara per 4 persone":
+    {
+      "products": [
+        { "name": "Spaghetti", "quantity": "320g", "category": "Pasta e Riso", "reason": "Base per la pasta" },
+        { "name": "Guanciale", "quantity": "150g", "category": "Carne e Pesce", "reason": "Ingrediente fondamentale per il condimento" },
+        { "name": "Uova fresche", "quantity": "4", "category": "Latticini e Uova", "reason": "Per la crema della carbonara (un tuorlo a persona)" },
+        { "name": "Pecorino Romano DOP", "quantity": "100g", "category": "Latticini e Uova", "reason": "Formaggio essenziale per la salsa" },
+        { "name": "Pepe nero in grani", "quantity": null, "category": "Condimenti e Conserve", "reason": "Da macinare fresco per completare il piatto" }
+      ]
+    }

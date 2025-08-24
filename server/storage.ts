@@ -21,7 +21,7 @@ export interface IStorage {
 
   // Shopping Lists
   createDefaultListForUser(userId: number): Promise<ShoppingList>;
-  createList(userId: number, name: string): Promise<ShoppingList>; // NUOVA FUNZIONE
+  createList(userId: number, name: string): Promise<ShoppingList>;
   getListsForUser(userId: number): Promise<ShoppingList[]>;
   isUserMemberOfList(userId: number, listId: number, roles?: Array<'owner' | 'editor' | 'viewer'>): Promise<boolean>;
   
@@ -34,7 +34,9 @@ export interface IStorage {
   // Shopping Items
   getShoppingItemsByListId(listId: number): Promise<ShoppingItem[]>;
   createShoppingItem(item: InsertShoppingItem): Promise<ShoppingItem>;
+  updateShoppingItem(id: number, data: Partial<Omit<ShoppingItem, 'id'>>): Promise<ShoppingItem>;
   deleteShoppingItem(id: number): Promise<void>;
+  clearShoppingList(listId: number): Promise<void>;
   markItemAsPurchased(id: number, userId: number, storeId?: number): Promise<void>;
   
   // Purchase History
@@ -85,7 +87,6 @@ class DrizzleStorage implements IStorage {
     return this.createList(userId, "La Mia Lista della Spesa");
   }
 
-  // NUOVA FUNZIONE per creare una lista generica
   async createList(userId: number, name: string): Promise<ShoppingList> {
     const [newList] = await db.insert(shoppingLists).values({ name, ownerId: userId }).returning();
     await db.insert(listMembers).values({ listId: newList.id, userId: userId, role: "owner" });
@@ -162,9 +163,21 @@ class DrizzleStorage implements IStorage {
     const [newItem] = await db.insert(shoppingItems).values(item).returning();
     return newItem;
   }
+  
+  async updateShoppingItem(id: number, data: Partial<Omit<ShoppingItem, 'id'>>): Promise<ShoppingItem> {
+    const [updatedItem] = await db.update(shoppingItems).set(data).where(eq(shoppingItems.id, id)).returning();
+    if (!updatedItem) {
+      throw new Error(`Prodotto con ID ${id} non trovato.`);
+    }
+    return updatedItem;
+  }
 
   async deleteShoppingItem(id: number): Promise<void> {
     await db.delete(shoppingItems).where(eq(shoppingItems.id, id));
+  }
+  
+  async clearShoppingList(listId: number): Promise<void> {
+    await db.delete(shoppingItems).where(eq(shoppingItems.listId, listId));
   }
   
   async markItemAsPurchased(id: number, userId: number, storeId?: number): Promise<void> {

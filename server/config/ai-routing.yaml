@@ -1,0 +1,26 @@
+# Imposta il provider AI per ogni specifica funzione
+# Provider validi: 'openai', 'gemini', 'lm-studio'
+
+# Funzione per analizzare il testo di un prodotto (es. "2 mele")
+# 'lm-studio' è una buona scelta se si vuole la massima velocità e costo zero per operazioni semplici.
+processItem: 'lm-studio'
+
+# Funzione per generare una lista della spesa da un'esigenza (es. "serata pizza")
+# 'openai' (GPT-4o) è ottimo per la creatività e la comprensione del linguaggio naturale.
+generateAIShoppingList: 'lm-studio'
+
+# Funzione per suggerire prodotti basandosi sulla cronologia
+# 'gemini' potrebbe essere una buona via di mezzo per analisi complesse.
+generateSmartSuggestions: 'openai'
+
+# Funzione per abbinare prodotti a un sito di e-commerce
+# Richiede alta precisione, quindi 'openai' è una scelta solida.
+matchProductsToEcommerce: 'openai'
+
+# Funzione per valutare la corrispondenza di un prodotto
+# Anche questa richiede precisione.
+evaluateProductMatch: 'openai'
+
+# Un provider di default nel caso una funzione non sia specificata nel file.
+# Se una funzione non è elencata qui sopra, userà questo provider.
+default: 'openai'

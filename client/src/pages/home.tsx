@@ -4,7 +4,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { 
-  FileText, History, Brain, Zap, ShoppingBasket, ShoppingCart, Settings, Plus, LogOut, Loader2,
+  FileText, History, Lightbulb, Zap, ShoppingBasket, ShoppingCart, Settings, Plus, LogOut, Loader2,
   MapPin, Store as StoreIcon, Edit, Share2, X as XIcon
 } from "lucide-react";
 import { Link } from "wouter";

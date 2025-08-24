@@ -109,7 +109,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use(passport.session());
 
   // =================================================================
-  // ROTTE DI AUTENTICAZIONE
+  // ROTTE DI AUTENTICAZIONE (invariate)
   // =================================================================
   app.post("/api/auth/register", async (req, res, next) => {
     try {
@@ -233,7 +233,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
-  // --- INSERISCI QUESTO BLOCCO QUI ---
   app.post("/api/lists", isAuthenticated, async (req, res, next) => {
     try {
       const { name } = req.body;
@@ -249,7 +248,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       next(error);
     }
   });
-  // --- FINE BLOCCO DA INSERIRE ---
 
   app.get("/api/lists/:listId/items", isAuthenticated, isListMember, async (req, res, next) => {
     try {
@@ -260,19 +258,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
       next(error);
     }
   });
+  // --- NUOVA ROTTA PER SVUOTARE LA LISTA ---
+  app.delete("/api/lists/:listId/items", isAuthenticated, isListMember, async (req, res, next) => {
+    try {
+      const listId = parseInt(req.params.listId, 10);
+      await storage.clearShoppingList(listId);
+      res.json({ success: true, message: "Tutti i prodotti sono stati rimossi dalla lista." });
+    } catch (error) {
+      next(error);
+    }
+  });
 
+
+
+  // --- MODIFICA CHIAVE QUI ---
   app.post("/api/lists/:listId/items", isAuthenticated, isListMember, async (req, res, next) => {
     try {
       const listId = parseInt(req.params.listId, 10);
-      const rawName = req.body.name;
+      // Leggiamo i dati già processati dal body della richiesta
+      const { name: rawName, quantity: rawQuantity, category: rawCategory } = req.body;
 
       if (!rawName || typeof rawName !== 'string') {
         return res.status(400).json({ message: "Il nome del prodotto è obbligatorio." });
       }
 
-      // Processa il testo per ottenere nome, quantità e categoria in una sola chiamata
-      const { name, quantity, category } = await processItem(rawName);
+      let name, quantity, category;
 
+      // Se il frontend ci ha già dato i dati strutturati (dal componente AI), li usiamo.
+      if (rawQuantity !== undefined && rawCategory !== undefined) {
+        name = rawName;
+        quantity = rawQuantity;
+        category = rawCategory;
+      } else {
+        // Altrimenti (dal form di aggiunta manuale), processiamo il testo per estrarre le info.
+        const processed = await processItem(rawName);
+        name = processed.name;
+        quantity = processed.quantity;
+        category = processed.category;
+      }
+      
       const validatedData = insertShoppingItemSchema.parse({
         listId,
         name,
@@ -363,28 +387,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/items/:itemId", isAuthenticated, isItemOwner, async (req, res, next) => {
+    app.put("/api/items/:itemId", isAuthenticated, isItemOwner, async (req, res, next) => {
     try {
       const itemId = parseInt(req.params.itemId, 10);
       const { name, quantity } = req.body;
 
-      if (!name) {
+      if (!name || !name.trim()) {
         return res.status(400).json({ message: "Il nome è obbligatorio per l'aggiornamento." });
       }
       
       const currentItem = (req as any).item as ShoppingItem;
       const dataToUpdate: Partial<Omit<ShoppingItem, 'id'>> = {
         quantity: quantity || null,
-        name: name,
+        name: name.trim(),
       };
 
-      // Se il nome è cambiato, ricalcola la categoria
-      if (name !== currentItem.name) {
-        const { category } = await processItem(name);
+      // Se il nome del prodotto è cambiato, dobbiamo ricalcolare la categoria
+      if (name.trim() !== currentItem.name) {
+        const { category } = await processItem(name.trim());
         dataToUpdate.category = category;
       }
 
-      const [updatedItem] = await db.update(shoppingItems).set(dataToUpdate).where(eq(shoppingItems.id, itemId)).returning();
+      const updatedItem = await storage.updateShoppingItem(itemId, dataToUpdate);
       
       res.json(updatedItem);
     } catch (error) {

@@ -1,4 +1,9 @@
 {
-"email": "final-test@example.com",
-"password": "password123"
+    "model": "openai/gpt-oss-20b",
+    "messages": [
+        {
+            "role": "user",
+            "content": "Ciao, come stai?"
+        }
+    ]
 }

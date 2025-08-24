@@ -5,7 +5,7 @@
   "license": "MIT",
   "scripts": {
     "dev": "concurrently \"npm:dev:server\" \"npm:dev:client\"",
-    "dev:server": "tsx --watch --env-file .env server/index.ts",
+    "dev:server": "nodemon --watch server --ext ts --ignore server/data/ --exec \"tsx --env-file .env server/index.ts\"",
     "dev:client": "vite",
     "build:client": "vite build",
     "build:server": "esbuild server/index.ts --platform=node --bundle --outfile=dist/index.js --format=esm --packages=external",
@@ -119,6 +119,7 @@
     "cross-env": "^7.0.3",
     "drizzle-kit": "^0.30.4",
     "esbuild": "^0.25.0",
+    "nodemon": "^3.1.4",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.19.1",

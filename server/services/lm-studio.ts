@@ -1,23 +1,25 @@
 import * as fs from "fs";
 import * as yaml from 'js-yaml';
 import OpenAI from "openai";
-import { enhancedProductMatching, advancedMatcher } from './advanced-matching.js';
 import { promptManager } from './prompt-manager.js';
 
-// --- CLIENT SETUP (invariato) ---
-let openai: OpenAI | null = null;
-export function getOpenAIClient(): OpenAI {
-  if (openai) return openai;
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey || apiKey === "default_key") {
-    throw new Error("OPENAI_API_KEY non è impostata o non è valida nel file .env.");
-  }
-  console.log("✅ Inizializzazione del client OpenAI.");
-  openai = new OpenAI({ apiKey });
-  return openai;
+// --- CLIENT SETUP ---
+let lmStudioClient: OpenAI | null = null;
+
+export function getLMStudioClient(): OpenAI {
+  if (lmStudioClient) return lmStudioClient;
+  
+  const apiKey = "lm-studio"; 
+  
+  console.log("✅ Inizializzazione del client per LM Studio.");
+  lmStudioClient = new OpenAI({
+    apiKey,
+    baseURL: "http://localhost:1234/v1"
+  });
+  return lmStudioClient;
 }
 
-// --- CATEGORY MANAGEMENT (invariato) ---
+// --- CATEGORY MANAGEMENT ---
 let categories: string[] = [];
 function getCategories(): string[] {
   if (categories.length === 0) {
@@ -38,72 +40,85 @@ function getCategories(): string[] {
 }
 getCategories();
 
-// --- processItem (invariato) ---
+// --- FUNZIONI SPECIFICHE PER LM STUDIO ---
+
 export async function processItem(text: string): Promise<{ name: string; quantity: string | null; category: string }> {
     const availableCategories = getCategories();
-    const client = getOpenAIClient();
+    const client = getLMStudioClient();
+    
     const { finalPrompt, parameters } = promptManager.getPrompt('processShoppingListItem', {
       text: text,
       categories: availableCategories.join('\n- '),
     });
+
     try {
         const response = await client.chat.completions.create({
-            model: parameters.model || "gpt-4o",
+            model: "local-model",
             messages: [
-                { role: "system", content: "Sei un assistente che estrae dati strutturati dal testo. Rispondi solo con JSON valido."}, 
+                { role: "system", content: "Sei un assistente che estrae dati e risponde solo in formato JSON."},
                 { role: "user", content: finalPrompt }
             ],
-            response_format: parameters.response_format || { type: "json_object" },
             temperature: parameters.temperature || 0.1,
         });
-        const result = JSON.parse(response.choices[0].message.content || '{}');
+
+        const content = response.choices[0].message.content || '{}';
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        const result = JSON.parse(jsonMatch ? jsonMatch[0] : '{}');
         const name = result.name || text;
         const quantity = result.quantity || null;
         const category = availableCategories.includes(result.category) ? result.category : 'Altri';
         return { name, quantity, category };
-    } catch (error) {
-        console.error('Errore in processItem con OpenAI:', error);
+
+    } catch (error: any) {
+        console.error('Errore in processItem con LM Studio:', error);
+        if (error.code === 'ECONNREFUSED') {
+            throw new Error("Impossibile connettersi al server LM Studio. Assicurati che sia in esecuzione su http://localhost:1234.");
+        }
         return { name: text, quantity: null, category: 'Altri' };
     }
 }
 
-// --- generateAIShoppingList (MODIFICATO) ---
+// --- NUOVA IMPLEMENTAZIONE PER LA GENERAZIONE LISTA ---
 export async function generateAIShoppingList(requirement: string): Promise<any[]> {
   try {
-    const client = getOpenAIClient();
+    const client = getLMStudioClient();
     const availableCategories = getCategories();
-
-    // --- NUOVA LOGICA: ESTRAZIONE NUMERO PERSONE ---
-    const peopleMatch = requirement.match(/\bper\s+(\d+)\b/i);
-    const peopleCount = peopleMatch ? peopleMatch[1] : "non specificato";
-    console.log(`👤 Numero di persone estratto dalla richiesta: ${peopleCount}`);
 
     const { finalPrompt, parameters } = promptManager.getPrompt('generateListFromRequirement', {
       requirement: requirement,
-      peopleCount: peopleCount, // Passiamo la nuova variabile
       categories: availableCategories.join('\n- ')
     });
 
     const response = await client.chat.completions.create({
-      model: parameters.model || "gpt-4o",
+      model: "local-model",
       messages: [{ role: "user", content: finalPrompt }],
-      response_format: parameters.response_format,
-      temperature: parameters.temperature,
+      temperature: parameters.temperature || 0.7,
     });
 
     const content = response.choices[0]?.message?.content;
-    if (!content) throw new Error('No response from OpenAI');
-
-    const parsed = JSON.parse(content);
+    if (!content) throw new Error('No response from LM Studio');
+    
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : '{}');
+    
     return (parsed.products || []).map((p: any, i: number) => ({ ...p, id: p.id || `ai-${Date.now()}-${i}`, selected: true }));
 
-  } catch (error) {
-    console.error('Error generating AI shopping list:', error);
-    throw new Error('Impossibile generare la lista AI');
+  } catch (error: any) {
+      console.error('Error generating AI shopping list with LM Studio:', error);
+      if (error.code === 'ECONNREFUSED') {
+          throw new Error("Impossibile connettersi al server LM Studio.");
+      }
+      throw new Error('Impossibile generare la lista AI con LM Studio');
   }
 }
 
-// --- OTHER AI FUNCTIONS (invariato) ---
-export async function generateSmartSuggestions(history: any[]): Promise<any[]> { console.log('generateSmartSuggestions not fully implemented in openai.ts'); return []; }
-export async function matchProductsToEcommerce(items: string[], platform: string, skip: number = 0): Promise<any[]> { console.log('matchProductsToEcommerce not fully implemented in openai.ts'); return []; }
-export async function evaluateProductMatch(userQuery: string, product: any): Promise<any> { console.log('evaluateProductMatch not fully implemented in openai.ts'); return { confidence: 50, reasoning: 'Not implemented' }; }
+// --- STUBS PER LE FUNZIONI RIMANENTI ---
+export async function generateSmartSuggestions(history: any[]): Promise<any[]> { 
+    return []; 
+}
+export async function matchProductsToEcommerce(items: string[], platform: string, skip: number = 0): Promise<any[]> { 
+    return []; 
+}
+export async function evaluateProductMatch(userQuery: string, product: any): Promise<any> { 
+    return { confidence: 0, reasoning: 'Non implementato per LM Studio' }; 
+}

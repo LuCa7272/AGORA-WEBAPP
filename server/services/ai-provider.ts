@@ -1,101 +1,135 @@
+import * as fs from "fs";
+import * as yaml from 'js-yaml';
+
+// Importiamo le funzioni specifiche con un alias
 import {
-    processItemText as processItemTextOpenAI,
+    processItem as processItemOpenAI,
     generateAIShoppingList as generateAIShoppingListOpenAI,
-    generateSmartSuggestions as generateSmartSuggestionsOpenAI,
-    matchProductsToEcommerce as matchProductsToEcommerceOpenAI,
-    evaluateProductMatch as evaluateProductMatchOpenAI
+    // ... altre funzioni di OpenAI
 } from './openai.js';
 
 import {
-    processItemText as processItemTextGemini,
-    // generateAIShoppingList as generateAIShoppingListGemini, // Assuming these exist in gemini.ts
-    // generateSmartSuggestions as generateSmartSuggestionsGemini,
-    // matchProductsToEcommerce as matchProductsToEcommerceGemini,
-    // evaluateProductMatch as evaluateProductMatchGemini
+    processItem as processItemGemini,
+    generateAIShoppingList as generateAIShoppingListGemini,
 } from './gemini.js';
 
-export type AIProvider = 'openai' | 'gemini';
+import {
+    processItem as processItemLMStudio,
+    generateAIShoppingList as generateAIShoppingListLMStudio, // <-- IMPORTIAMO LA NUOVA FUNZIONE
+} from './lm-studio.js';
 
-// --- PROVIDER MANAGEMENT ---
+export type AIProvider = 'openai' | 'gemini' | 'lm-studio';
 
+// --- AI ROUTING CONFIGURATION (invariato) ---
+interface AIRoutingConfig {
+    processItem?: AIProvider;
+    generateAIShoppingList?: AIProvider;
+    generateSmartSuggestions?: AIProvider;
+    matchProductsToEcommerce?: AIProvider;
+    evaluateProductMatch?: AIProvider;
+    default: AIProvider;
+    [key: string]: AIProvider | undefined;
+}
+let aiRoutingConfig: AIRoutingConfig;
+function loadAIRoutingConfig(): AIRoutingConfig {
+    try {
+        const configPath = 'server/config/ai-routing.yaml';
+        const fileContents = fs.readFileSync(configPath, 'utf8');
+        const loadedConfig = yaml.load(fileContents) as AIRoutingConfig;
+        if (!loadedConfig.default) {
+            loadedConfig.default = 'openai';
+        }
+        return loadedConfig;
+    } catch (e) {
+        console.error(`Errore durante la lettura di server/config/ai-routing.yaml:`, e);
+        return { default: 'openai' };
+    }
+}
+aiRoutingConfig = loadAIRoutingConfig();
+console.log('🤖 Configurazione AI caricata:', aiRoutingConfig);
+
+// --- PROVIDER MANAGEMENT (invariato) ---
 export function isProviderAvailable(provider: AIProvider): boolean {
     switch (provider) {
-        case 'openai': return !!process.env.OPENAI_API_KEY;
-        case 'gemini': return !!process.env.GEMINI_API_KEY;
+        case 'openai': return !!process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'default_key';
+        case 'gemini': return !!process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'default_key';
+        case 'lm-studio': return process.env.LM_STUDIO_ENABLED === 'true';
         default: return false;
     }
 }
-
-function getCurrentAIProvider(): AIProvider {
-    if ((global as any).AI_PROVIDER) return (global as any).AI_PROVIDER;
-    if (isProviderAvailable('gemini')) return 'gemini';
-    return 'openai';
-}
-
-export function setAIProvider(provider: AIProvider): void {
-    (global as any).AI_PROVIDER = provider;
-    console.log(`🤖 AI Provider set to: ${provider.toUpperCase()}`);
-}
-
 export function getAvailableProviders(): { provider: AIProvider, available: boolean, name: string }[] {
     return [
         { provider: 'openai', available: isProviderAvailable('openai'), name: 'OpenAI (GPT-4o)' },
-        { provider: 'gemini', available: isProviderAvailable('gemini'), name: 'Google Gemini (2.5-Flash/Pro)' }
+        { provider: 'gemini', available: isProviderAvailable('gemini'), name: 'Google Gemini (1.5 Flash/Pro)' },
+        { provider: 'lm-studio', available: isProviderAvailable('lm-studio'), name: 'LM Studio (Locale)' }
     ];
 }
 
-// --- UNIFIED AI FUNCTIONS ---
-
-async function execute<T>(geminiFn: () => Promise<T>, openaiFn: () => Promise<T>): Promise<T> {
-    const provider = getCurrentAIProvider();
-    switch (provider) {
-        case 'gemini':
-            if (isProviderAvailable('gemini')) return await geminiFn();
-            console.warn('⚠️ Gemini not available, falling back to OpenAI');
-            if (isProviderAvailable('openai')) return await openaiFn();
-            break;
-        case 'openai':
-            if (isProviderAvailable('openai')) return await openaiFn();
-            break;
-    }
-    throw new Error("Nessun provider AI valido è configurato o disponibile.");
-}
+// --- FUNZIONI DI ROUTING ---
 
 export async function processItem(text: string): Promise<{ name: string; quantity: string | null; category: string }> {
-    return execute(
-        () => processItemTextGemini(text),
-        () => processItemTextOpenAI(text)
-    );
+    const configuredProvider = aiRoutingConfig.processItem || aiRoutingConfig.default;
+    const fallbackProviders: AIProvider[] = ['openai', 'gemini', 'lm-studio'].filter(p => p !== configuredProvider);
+
+    try {
+        if (isProviderAvailable(configuredProvider)) {
+            console.log(`🧠 Tentativo di processare l'item con il provider configurato: ${configuredProvider}`);
+            switch (configuredProvider) {
+                case 'openai': return await processItemOpenAI(text);
+                case 'gemini': return await processItemGemini(text);
+                case 'lm-studio': return await processItemLMStudio(text);
+            }
+        }
+    } catch (error) { console.error(`❌ Errore con il provider ${configuredProvider}:`, error); }
+
+    for (const provider of fallbackProviders) {
+        try {
+            if (isProviderAvailable(provider)) {
+                console.warn(`⚠️ Fallback al provider: ${provider}`);
+                switch (provider) {
+                    case 'openai': return await processItemOpenAI(text);
+                    case 'gemini': return await processItemGemini(text);
+                    case 'lm-studio': return await processItemLMStudio(text);
+                }
+            }
+        } catch (error) { console.error(`❌ Errore con il provider di fallback ${provider}:`, error); }
+    }
+    throw new Error("Nessun provider AI è stato in grado di processare la richiesta.");
 }
 
 export async function generateAIShoppingList(requirement: string): Promise<any[]> {
-    // @ts-ignore
-    return execute(
-        () => generateAIShoppingListGemini(requirement), // Assuming this will be created in gemini.ts
-        () => generateAIShoppingListOpenAI(requirement)
-    );
+    const configuredProvider = aiRoutingConfig.generateAIShoppingList || aiRoutingConfig.default;
+    const fallbackProviders: AIProvider[] = ['openai', 'gemini', 'lm-studio'].filter(p => p !== configuredProvider); // <-- AGGIUNTO LM-STUDIO
+
+    try {
+        if (isProviderAvailable(configuredProvider)) {
+            console.log(`🧠 Tentativo di generare la lista con il provider configurato: ${configuredProvider}`);
+            switch (configuredProvider) {
+                case 'openai': return await generateAIShoppingListOpenAI(requirement);
+                case 'gemini': return await generateAIShoppingListGemini(requirement);
+                case 'lm-studio': return await generateAIShoppingListLMStudio(requirement); // <-- AGGIUNTO CASO LM-STUDIO
+            }
+        }
+    } catch (error) { console.error(`❌ Errore con il provider ${configuredProvider}:`, error); }
+
+    for (const provider of fallbackProviders) {
+        try {
+            if (isProviderAvailable(provider)) {
+                console.warn(`⚠️ Fallback al provider per la generazione lista: ${provider}`);
+                switch (provider) {
+                    case 'openai': return await generateAIShoppingListOpenAI(requirement);
+                    case 'gemini': return await generateAIShoppingListGemini(requirement);
+                    case 'lm-studio': return await generateAIShoppingListLMStudio(requirement); // <-- AGGIUNTO CASO LM-STUDIO
+                }
+            }
+        } catch (error) { console.error(`❌ Errore con il provider di fallback ${provider}:`, error); }
+    }
+    throw new Error("Nessun provider AI è stato in grado di generare la lista.");
 }
 
-export async function generateSmartSuggestions(itemStats: any[]): Promise<any[]> {
-    // @ts-ignore
-    return execute(
-        () => generateSmartSuggestionsGemini(itemStats), // Assuming this will be created in gemini.ts
-        () => generateSmartSuggestionsOpenAI(itemStats)
-    );
-}
-
-export async function matchProductsToEcommerce(items: string[], platform: string, skip: number = 0): Promise<any[]> {
-    // @ts-ignore
-    return execute(
-        () => matchProductsToEcommerceGemini(items, platform), // Assuming this will be created in gemini.ts
-        () => matchProductsToEcommerceOpenAI(items, platform, skip)
-    );
-}
-
-export async function evaluateProductMatch(userQuery: string, product: any): Promise<{confidence: number, reasoning: string}> {
-    // @ts-ignore
-    return execute(
-        () => evaluateProductMatchGemini(userQuery, product), // Assuming this will be created in gemini.ts
-        () => evaluateProductMatchOpenAI(userQuery, product)
-    );
-}
+// Esportiamo le altre funzioni come prima
+export {
+    generateSmartSuggestions,
+    matchProductsToEcommerce,
+    evaluateProductMatch
+} from './openai';
