@@ -11,9 +11,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import type { ShoppingItem, EcommerceMatch } from "@shared/schema";
+import type { ShoppingItem, EcommerceMatch, ManualSelections } from "@shared/schema";
 import { ProductMatchDetailsDialog } from './ProductMatchDetailsDialog';
-import { ManualSelections } from "@/pages/home"; // Importa il tipo
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,9 +34,9 @@ interface ProductMatchingProps {
   activeListId: number | null;
   onNavigateToCart?: () => void;
   onBack?: () => void;
-  // --- MODIFICA 1: Aggiunta props per la gestione dello stato esterno ---
   manualSelections: ManualSelections;
   onManualSelectionsChange: (selections: ManualSelections) => void;
+  initialItemsToMatch?: string[];
 }
 
 export default function ProductMatching({ 
@@ -45,7 +44,8 @@ export default function ProductMatching({
   onNavigateToCart, 
   onBack,
   manualSelections,
-  onManualSelectionsChange
+  onManualSelectionsChange,
+  initialItemsToMatch = []
 }: ProductMatchingProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -68,7 +68,6 @@ export default function ProductMatching({
     enabled: !!selectedPlatform,
   });
 
-  // --- MODIFICA 2: Inizializza le selezioni manuali se non presenti ---
   useEffect(() => {
     if (!isAutomatic && allMatches.length > 0) {
       const newSelections = { ...manualSelections };
@@ -88,20 +87,17 @@ export default function ProductMatching({
     }
   }, [isAutomatic, allMatches, items, manualSelections, onManualSelectionsChange]);
 
-
   const matchProductsMutation = useMutation({
-    mutationFn: async (): Promise<EcommerceMatch[]> => {
-      await apiRequest("DELETE", `/api/ecommerce/matches/${selectedPlatform}`, {});
-      
-      const itemNames = items.map(item => item.name);
-      if (itemNames.length === 0) {
-        throw new Error("La lista è vuota. Aggiungi prodotti prima di avviare il matching.");
+    mutationFn: async (payload: { items: string[]; reset?: boolean }): Promise<EcommerceMatch[]> => {
+      const { items: itemsToMatch, reset = false } = payload;
+      if (itemsToMatch.length === 0) {
+        throw new Error("Nessun prodotto da abbinare.");
       }
-
       const response = await apiRequest("POST", "/api/ecommerce/match", {
-        items: itemNames,
+        items: itemsToMatch,
         platform: selectedPlatform,
-        expandSearch: false
+        expandSearch: false,
+        reset: reset
       });
       return response.json();
     },
@@ -109,7 +105,7 @@ export default function ProductMatching({
       queryClient.invalidateQueries({ queryKey: ["/api/ecommerce/matches", selectedPlatform] });
       toast({
         title: "Matching completato!",
-        description: `Trovati ${newlyCreatedMatches.length} prodotti.`,
+        description: `Trovati ${newlyCreatedMatches.length} nuovi prodotti.`,
       });
       if (isAutomatic && onNavigateToCart) {
         onNavigateToCart();
@@ -123,6 +119,20 @@ export default function ProductMatching({
       });
     },
   });
+  
+  useEffect(() => {
+    if (initialItemsToMatch.length > 0) {
+      matchProductsMutation.mutate({ items: initialItemsToMatch });
+    }
+  }, [initialItemsToMatch]);
+
+  const handleFullResetMatch = () => {
+    const allItemNames = items.map(item => item.name);
+    if (allItemNames.length > 0) {
+      matchProductsMutation.mutate({ items: allItemNames, reset: true });
+    }
+  };
+
 
   const loadMoreMutation = useMutation({
     mutationFn: async (itemName: string): Promise<EcommerceMatch[]> => {
@@ -152,7 +162,6 @@ export default function ProductMatching({
     },
   });
 
-  // --- MODIFICA 3: Le funzioni di handle ora usano lo stato esterno ---
   const handleProductSelect = (itemName: string, productId: string | null, checked: boolean) => {
     const newSelections = { ...manualSelections };
     if (checked && productId) {
@@ -177,12 +186,10 @@ export default function ProductMatching({
     return acc;
   }, {});
   
-  const selectedPlatformData = platforms.find(p => p.id === selectedPlatform);
   const hasItems = items.length > 0;
-  const hasMatches = allMatches.length > 0;
-
+  
   const renderMatchButton = () => {
-    const buttonText = isAutomatic ? "Matching Automatico" : "Trova Opzioni Prodotti";
+    const buttonText = "Trova Opzioni Prodotti";
     const isDisabled = matchProductsMutation.isPending || isLoadingItems;
 
     if (allMatches.length > 0) {
@@ -198,13 +205,13 @@ export default function ProductMatching({
             <AlertDialogHeader>
               <AlertDialogTitle>Sei sicuro di voler continuare?</AlertDialogTitle>
               <AlertDialogDescription>
-                Il carrello contiene già dei prodotti. Avviando un nuovo matching, i prodotti attuali verranno rimossi e sostituiti con i risultati della nuova ricerca basata sulla lista attuale.
+                Questa azione cancellerà tutti i prodotti attualmente selezionati e avvierà una nuova ricerca per l'intera lista.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Annulla</AlertDialogCancel>
-              <AlertDialogAction onClick={() => matchProductsMutation.mutate()}>
-                Sovrascrivi Selezione
+              <AlertDialogAction onClick={handleFullResetMatch}>
+                Resetta e Cerca di Nuovo
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -214,7 +221,7 @@ export default function ProductMatching({
 
     return (
       <Button 
-        onClick={() => matchProductsMutation.mutate()}
+        onClick={() => matchProductsMutation.mutate({ items: items.map(i => i.name), reset: true })}
         disabled={isDisabled}
         className="w-full"
       >
@@ -309,7 +316,7 @@ export default function ProductMatching({
         </CardContent>
       </Card>
       
-      {hasMatches && !isAutomatic && (
+      {Object.keys(groupedMatches).length > 0 && !isAutomatic && (
         <Card>
           <CardHeader>
             <CardTitle>Seleziona i tuoi Prodotti</CardTitle>

@@ -47,10 +47,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { processOfflineQueue, getOfflineQueue } from "@/lib/offline-queue";
 import { cn } from "@/lib/utils";
-import type { ShoppingList as ShoppingListType, Store, ShoppingItem, EcommerceMatch } from "@shared/schema";
-
-// --- MODIFICA 1: Definiamo un tipo per lo stato delle selezioni manuali ---
-export type ManualSelections = { [itemName: string]: { productId: string; quantity: number } };
+import type { ShoppingList as ShoppingListType, Store, ShoppingItem, EcommerceMatch, ManualSelections } from "@shared/schema";
 
 // Funzione helper per calcolare la distanza
 function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -130,8 +127,6 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<'lista' | 'acquista'>("lista");
   const [shoppingFlow, setShoppingFlow] = useState<'selection' | 'matching' | 'cart'>('selection');
   const [isMarketMode, setIsMarketMode] = useState(false);
-
-  // --- MODIFICA 2: "Solleviamo" lo stato delle selezioni qui ---
   const [manualSelections, setManualSelections] = useState<ManualSelections>({});
 
   // Stati di dati
@@ -141,6 +136,7 @@ export default function Home() {
   const [nearbyStores, setNearbyStores] = useState<Store[]>([]);
   const [categoryOrder, setCategoryOrder] = useState<string[]>([]);
   const [proposedStore, setProposedStore] = useState<Store | null>(null);
+  const [itemsToMatch, setItemsToMatch] = useState<string[]>([]);
 
   // Stati UI (dialoghi, caricamenti)
   const [isStoreSelectorOpen, setIsStoreSelectorOpen] = useState(false);
@@ -149,6 +145,7 @@ export default function Home() {
   const [isNicknameDialogOpen, setIsNicknameDialogOpen] = useState(false);
   const [isAddListDialogOpen, setIsAddListDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isPartialMatchDialogOpen, setIsPartialMatchDialogOpen] = useState(false);
 
   const form = useForm<NewListFormValues>({ resolver: zodResolver(newListSchema), defaultValues: { name: "" } });
 
@@ -209,7 +206,8 @@ export default function Home() {
   
   useEffect(() => {
     setShoppingFlow('selection');
-    setManualSelections({}); // Resetta le selezioni quando cambia la lista
+    setManualSelections({});
+    setItemsToMatch([]);
   }, [activeListId]);
 
   useEffect(() => {
@@ -311,6 +309,57 @@ export default function Home() {
     setActiveTab('lista');
   }
 
+  const matchStatus = useMemo(() => {
+    if (!shoppingItems || shoppingItems.length === 0) {
+      return { status: 'empty', matchedCount: 0, unmatchedCount: 0, totalCount: 0 };
+    }
+    const itemNames = new Set(shoppingItems.map(item => item.name.toLowerCase()));
+    const matchedItemNames = new Set(ecommerceMatches.map(match => match.originalItem.toLowerCase()));
+    
+    let matchedCount = 0;
+    itemNames.forEach(name => {
+      if (matchedItemNames.has(name)) {
+        matchedCount++;
+      }
+    });
+
+    const totalCount = itemNames.size;
+    const unmatchedCount = totalCount - matchedCount;
+
+    if (matchedCount === 0) {
+      return { status: 'none', matchedCount, unmatchedCount, totalCount };
+    }
+    if (unmatchedCount === 0) {
+      return { status: 'full', matchedCount, unmatchedCount, totalCount };
+    }
+    return { status: 'partial', matchedCount, unmatchedCount, totalCount };
+  }, [shoppingItems, ecommerceMatches]);
+
+  const handleCompraOnlineClick = () => {
+    switch (matchStatus.status) {
+      case 'full':
+        setItemsToMatch([]); 
+        setShoppingFlow('cart');
+        break;
+      case 'none':
+      case 'empty':
+        setItemsToMatch(shoppingItems.map(item => item.name));
+        setShoppingFlow('matching');
+        break;
+      case 'partial':
+        setIsPartialMatchDialogOpen(true);
+        break;
+    }
+  };
+  
+  const handleUpdateSelection = () => {
+    const matchedItemNames = new Set(ecommerceMatches.map(m => m.originalItem.toLowerCase()));
+    const unmatchedItems = shoppingItems.filter(item => !matchedItemNames.has(item.name.toLowerCase()));
+    setItemsToMatch(unmatchedItems.map(item => item.name));
+    setShoppingFlow('matching');
+    setIsPartialMatchDialogOpen(false);
+  };
+
   const renderShoppingFlow = () => {
     if (isCheckingIn) {
       return (
@@ -342,15 +391,27 @@ export default function Home() {
                   <CardDescription>Entra in modalità spesa, ottimizzata per il layout del negozio in cui ti trovi per un acquisto veloce e guidato.</CardDescription>
                 </CardContent>
               </Card>
-              <Card onClick={() => setShoppingFlow('matching')} className="cursor-pointer hover:border-primary hover:bg-primary/5 transition-all group">
+              <Card onClick={handleCompraOnlineClick} className="cursor-pointer hover:border-primary hover:bg-primary/5 transition-all group">
                 <CardHeader className="flex-row items-center gap-4 space-y-0">
                   <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center text-primary group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
                     <Globe className="w-6 h-6"/>
                   </div>
-                  <CardTitle>Compra Online</CardTitle>
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      {matchStatus.status === 'partial' ? "Aggiorna Carrello Online" : (matchStatus.status === 'full' ? "Vedi Carrello Online" : "Compra Online")}
+                      {matchStatus.matchedCount > 0 && <Badge variant="secondary">{matchStatus.matchedCount} / {matchStatus.totalCount} Prodotti</Badge>}
+                    </CardTitle>
+                  </div>
                 </CardHeader>
                 <CardContent>
-                  <CardDescription>Trasforma la tua lista in un carrello e-commerce. Il sistema troverà i prodotti per te sul sito del supermercato.</CardDescription>
+                  <CardDescription>
+                    {matchStatus.status === 'full' 
+                      ? "La tua selezione online è pronta. Visualizza il carrello e procedi all'acquisto."
+                      : matchStatus.status === 'partial'
+                      ? "Hai aggiunto nuovi prodotti alla lista. Aggiorna la selezione per includerli."
+                      : "Trasforma la tua lista in un carrello e-commerce. Il sistema troverà i prodotti per te."
+                    }
+                  </CardDescription>
                 </CardContent>
               </Card>
             </div>
@@ -360,11 +421,17 @@ export default function Home() {
         return (
           <ProductMatching 
             activeListId={activeListId}
-            onNavigateToCart={() => setShoppingFlow('cart')}
-            onBack={() => setShoppingFlow('selection')}
-            // --- MODIFICA 3: Passiamo lo stato e la funzione per aggiornarlo ---
+            onNavigateToCart={() => {
+              setShoppingFlow('cart');
+              setItemsToMatch([]); // Resetta lo stato dopo aver navigato
+            }}
+            onBack={() => {
+              setShoppingFlow('selection');
+              setItemsToMatch([]); // Resetta lo stato tornando indietro
+            }}
             manualSelections={manualSelections}
             onManualSelectionsChange={setManualSelections}
+            initialItemsToMatch={itemsToMatch}
           />
         );
       case 'cart':
@@ -565,6 +632,34 @@ export default function Home() {
             >
               {deleteListMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Elimina
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={isPartialMatchDialogOpen} onOpenChange={setIsPartialMatchDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Carrello Incompleto</AlertDialogTitle>
+            <AlertDialogDescription>
+              Hai aggiunto {matchStatus.unmatchedCount} nuovo/i prodotto/i alla lista che non sono ancora nel carrello online.
+              Vuoi aggiornare la selezione per includerli?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction 
+              variant="outline"
+              onClick={() => {
+                setShoppingFlow('cart');
+                setIsPartialMatchDialogOpen(false);
+              }}
+            >
+              Vedi Carrello Incompleto
+            </AlertDialogAction>
+            <AlertDialogAction 
+              onClick={handleUpdateSelection}
+            >
+              Aggiorna Selezione
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -15,7 +15,7 @@ import session from "express-session";
 import bcrypt from "bcrypt";
 import passport from "./auth";
 import { users, shoppingLists, type User, type PurchaseHistory, type ShoppingItem, type ShoppingList } from "@shared/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql, desc } from "drizzle-orm";
 import { db } from './db';
 import crypto from 'crypto';
 import { sendVerificationEmail, sendListInvitationEmail } from './services/email';
@@ -209,6 +209,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ROTTE PROTETTE
   // =================================================================
 
+  app.get("/api/user/autocomplete-suggestions", isAuthenticated, async (req, res, next) => {
+    try {
+        const userId = (req.user as User).id;
+        const searchTerm = (req.query.term as string) || "";
+        
+        console.log(`\n[SERVER] ➡️ Passo 2: Ricevuta richiesta di suggerimenti per '${searchTerm}'`);
+
+        const frequentItemsWithDetails = await storage.getFrequentItems(userId, searchTerm);
+
+        res.json(frequentItemsWithDetails);
+    } catch (error) {
+        next(error);
+    }
+  });
+
   app.put("/api/user/nickname", isAuthenticated, async (req, res, next) => {
     try {
         const { nickname } = req.body;
@@ -283,7 +298,6 @@ app.delete("/api/lists/:listId", isAuthenticated, isListOwner, async (req, res, 
     }
   });
   
-  // --- NUOVA ROTTA PER REGISTRARE L'ACQUISTO DEL CARRELLO ---
   app.post("/api/lists/:listId/purchase-cart", isAuthenticated, isListMember, async (req, res, next) => {
     try {
       const listId = parseInt(req.params.listId, 10);
@@ -296,8 +310,6 @@ app.delete("/api/lists/:listId", isAuthenticated, isListOwner, async (req, res, 
       }
 
       for (const item of itemsToPurchase) {
-        // Usiamo la stessa logica del 'markItemAsPurchased' ma senza il 'storeId'
-        // perché in questo flusso non lo conosciamo.
         await storage.markItemAsPurchased(item.id!, userId);
       }
       
@@ -319,11 +331,13 @@ app.delete("/api/lists/:listId", isAuthenticated, isListOwner, async (req, res, 
 
       let name, quantity, category;
       
-      if (rawQuantity !== undefined && rawCategory !== undefined) {
+      if (rawCategory) {
+        console.log(`[AddItem] Categoria fornita: "${rawCategory}". Salto l'analisi AI.`);
         name = rawName;
         quantity = rawQuantity;
         category = rawCategory;
       } else {
+        console.log(`[AddItem] Categoria non fornita. Analizzo il testo: "${rawName}" con l'AI.`);
         const processed = await processItem(rawName);
         name = processed.name;
         quantity = processed.quantity;
@@ -358,7 +372,7 @@ app.delete("/api/lists/:listId", isAuthenticated, isListOwner, async (req, res, 
         if(!list) return res.status(404).json({message: "Lista non trovata"});
 
         const token = crypto.randomBytes(32).toString('hex');
-        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000 * 7); // Scadenza tra 7 giorni
+        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000 * 7);
 
         await storage.createInvitation(listId, inviter.id, inviteeEmail, token, expiresAt);
         await sendListInvitationEmail(inviteeEmail, inviter, list, token);
@@ -435,7 +449,6 @@ app.delete("/api/lists/:listId", isAuthenticated, isListOwner, async (req, res, 
         name: name.trim(),
       };
 
-      // Se il nome del prodotto è cambiato, dobbiamo ricalcolare la categoria
       if (name.trim() !== currentItem.name) {
         const { category } = await processItem(name.trim());
         dataToUpdate.category = category;
@@ -539,7 +552,6 @@ app.delete("/api/lists/:listId", isAuthenticated, isListOwner, async (req, res, 
         return res.json([]);
       }
   
-      // Analizziamo la cronologia per calcolare le statistiche
       const itemStats = fullHistory.reduce((acc, item) => {
         if (!acc[item.itemName]) {
           acc[item.itemName] = {
@@ -554,7 +566,6 @@ app.delete("/api/lists/:listId", isAuthenticated, isListOwner, async (req, res, 
         return acc;
       }, {} as Record<string, { itemName: string; category: string; purchaseDates: Date[]; totalPurchases: number }>);
   
-      // Calcoliamo la frequenza media e l'ultima data di acquisto
       const itemStatsForAI = Object.values(itemStats).map(stats => {
         stats.purchaseDates.sort((a, b) => b.getTime() - a.getTime());
         const lastPurchaseDate = stats.purchaseDates[0];
@@ -576,7 +587,6 @@ app.delete("/api/lists/:listId", isAuthenticated, isListOwner, async (req, res, 
   
       const aiSuggestions = await generateSmartSuggestions(itemStatsForAI);
   
-      // Filtra i suggerimenti per non riproporre cose giÃ  suggerite di recente
       const recentSuggestions = await storage.getSuggestionsByUserId(userId);
       const recentItemNames = new Set(recentSuggestions.map(s => s.itemName));
       const filteredAiSuggestions = aiSuggestions.filter(s => !recentItemNames.has(s.itemName));
@@ -587,7 +597,7 @@ app.delete("/api/lists/:listId", isAuthenticated, isListOwner, async (req, res, 
             userId,
             itemName: suggestion.itemName,
             confidence: suggestion.confidence,
-            reasoning: suggestion.reasoningCode, // Salva il codice della motivazione
+            reasoning: suggestion.reasoningCode,
             category: suggestion.category || 'Altri',
           })
         )
@@ -633,7 +643,6 @@ app.delete("/api/lists/:listId", isAuthenticated, isListOwner, async (req, res, 
     try {
       const suggestionId = parseInt(req.params.suggestionId, 10);
       const userId = (req.user as User).id;
-      // Optional: check if the suggestion belongs to the user before deleting
       await storage.deleteSuggestion(suggestionId, userId);
       res.json({ success: true });
     } catch (error) {
@@ -669,7 +678,7 @@ app.delete("/api/lists/:listId", isAuthenticated, isListOwner, async (req, res, 
   app.post("/api/ecommerce/match", isAuthenticated, async (req, res, next) => {
     try {
       const userId = (req.user as User).id;
-      const { items, platform = "carrefour", expandSearch = false } = req.body;
+      const { items, platform = "carrefour", expandSearch = false, reset = false } = req.body;
       if (!Array.isArray(items)) return res.status(400).json({ message: "L'array 'items' è obbligatorio" });
       
       let skip = 0;
@@ -678,7 +687,8 @@ app.delete("/api/lists/:listId", isAuthenticated, isListOwner, async (req, res, 
         const existingMatches = await storage.getEcommerceMatchesByItemName(userId, platform, itemName);
         skip = existingMatches.length;
         console.log(`Ricerca espansa per "${itemName}". Trovati ${skip} match esistenti. Saltandoli...`);
-      } else {
+      } else if (reset) {
+        console.log(`Reset richiesto. Cancellazione dei match esistenti per la piattaforma ${platform}.`);
         await storage.clearEcommerceMatches(platform, userId);
       }
       

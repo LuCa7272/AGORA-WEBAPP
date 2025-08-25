@@ -9,13 +9,21 @@ import {
   type InsertSuggestion, type EcommerceMatch, type InsertEcommerceMatch,
   type Invitation, type InsertInvitation
 } from "@shared/schema";
-import { eq, desc, and, gte } from "drizzle-orm";
+import { eq, desc, and, gte, sql, like } from "drizzle-orm";
+
+export type FrequentItem = {
+  itemName: string;
+  purchaseCount: number;
+  recentSpecificPurchase?: RecentSpecificPurchase; 
+};
+export type RecentSpecificPurchase = EcommerceMatch;
 
 export interface IStorage {
   // Users
   getUserById(id: number): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   findUserByEmail(email: string): Promise<User | undefined>;
+  getFrequentItems(userId: number, searchTerm: string): Promise<FrequentItem[]>;
 
   // Shopping Lists
   createDefaultListForUser(userId: number): Promise<ShoppingList>;
@@ -80,6 +88,93 @@ class DrizzleStorage implements IStorage {
   async findUserByEmail(email: string): Promise<User | undefined> {
     return this.getUserByEmail(email);
   }
+
+  async getFrequentItems(userId: number, searchTerm: string): Promise<FrequentItem[]> {
+    const userLists = await this.getListsForUser(userId);
+    if (userLists.length === 0) return [];
+    const listIds = userLists.map(l => l.id);
+  
+    const cleanedSearchTerm = searchTerm.trim().toLowerCase();
+    if (cleanedSearchTerm.length === 0) return [];
+
+    // Step 1: Trova gli item frequenti come prima
+    const frequentItemsResult = await db.select({
+        itemName: purchaseHistory.itemName,
+        purchaseCount: sql<number>`count(${purchaseHistory.id})`.mapWith(Number)
+      })
+      .from(purchaseHistory)
+      .where(
+        and(
+          sql`${purchaseHistory.listId} IN ${listIds}`,
+          like(purchaseHistory.itemName, `%${cleanedSearchTerm}%`)
+        )
+      )
+      .groupBy(purchaseHistory.itemName)
+      .orderBy(desc(sql`count(${purchaseHistory.id})`))
+      .limit(5);
+
+    console.log(`[SERVER] 🔍 Passo 3a: Trovati ${frequentItemsResult.length} suggerimenti generici da purchaseHistory.`);
+    console.log(frequentItemsResult);
+
+    if (frequentItemsResult.length === 0) return [];
+
+    // Step 2: Recupera TUTTI gli acquisti specifici recenti dell'utente in un colpo solo
+    const recentSpecificPurchases = await db.select()
+      .from(ecommerceMatches)
+      .where(eq(ecommerceMatches.userId, userId))
+      .orderBy(desc(ecommerceMatches.createdAt));
+    
+    console.log(`[SERVER] 🔍 Passo 3b: Trovati ${recentSpecificPurchases.length} acquisti specifici (e-commerce matches) per l'utente.`);
+    // --- NUOVO LOG DETTAGLIATO ---
+    console.log("[SERVER] Dettaglio acquisti specifici trovati nel DB:");
+    console.table(recentSpecificPurchases.map(p => ({
+      originalItem: p.originalItem,
+      matchedProduct: p.matchedProduct,
+      price: p.price,
+      confidence: p.confidence,
+      createdAt: p.createdAt
+    })));
+    // --- FINE NUOVO LOG ---
+    
+    // Step 3: Crea una mappa per un accesso veloce
+    const specificPurchaseMap: Record<string, RecentSpecificPurchase> = {};
+    for (const match of recentSpecificPurchases) {
+      const key = match.originalItem.toLowerCase();
+      if (!specificPurchaseMap[key]) {
+        specificPurchaseMap[key] = match;
+      }
+    }
+
+    // Step 4: Unisci i dati
+    const finalResult: FrequentItem[] = frequentItemsResult.map(item => {
+      const specificMatch = specificPurchaseMap[item.itemName.toLowerCase()];
+      return {
+        ...item,
+        recentSpecificPurchase: specificMatch || undefined,
+      };
+    });
+
+    console.log(`[SERVER] 🎁 Passo 4: Dati finali uniti pronti per essere inviati al client.`);
+    console.log(finalResult);
+
+    return finalResult;
+  }
+  
+  private async getRecentSpecificPurchases(userId: number): Promise<Record<string, RecentSpecificPurchase>> {
+    const recentMatches = await db.select()
+      .from(ecommerceMatches)
+      .where(eq(ecommerceMatches.userId, userId))
+      .orderBy(desc(ecommerceMatches.createdAt));
+
+    const resultMap: Record<string, RecentSpecificPurchase> = {};
+    for (const match of recentMatches) {
+      if (!resultMap[match.originalItem]) {
+        resultMap[match.originalItem] = match;
+      }
+    }
+    return resultMap;
+  }
+
 
   // === SHOPPING LISTS ===
   async createDefaultListForUser(userId: number): Promise<ShoppingList> {
