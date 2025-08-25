@@ -232,7 +232,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       next(error);
     }
   });
-  
+
+app.delete("/api/lists/:listId", isAuthenticated, isListOwner, async (req, res, next) => {
+  try {
+    const listId = parseInt(req.params.listId, 10);
+    if (isNaN(listId)) {
+      return res.status(400).json({ message: "ID della lista non valido." });
+    }
+
+    await storage.deleteList(listId);
+
+    res.status(200).json({ message: "Lista eliminata con successo." });
+  } catch (error) {
+    next(error);
+  }
+});
   app.post("/api/lists", isAuthenticated, async (req, res, next) => {
     try {
       const { name } = req.body;
@@ -258,7 +272,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       next(error);
     }
   });
-  // --- NUOVA ROTTA PER SVUOTARE LA LISTA ---
+  
   app.delete("/api/lists/:listId/items", isAuthenticated, isListMember, async (req, res, next) => {
     try {
       const listId = parseInt(req.params.listId, 10);
@@ -268,14 +282,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
       next(error);
     }
   });
+  
+  // --- NUOVA ROTTA PER REGISTRARE L'ACQUISTO DEL CARRELLO ---
+  app.post("/api/lists/:listId/purchase-cart", isAuthenticated, isListMember, async (req, res, next) => {
+    try {
+      const listId = parseInt(req.params.listId, 10);
+      const userId = (req.user as User).id;
+      
+      const itemsToPurchase = await storage.getShoppingItemsByListId(listId);
+      
+      if (itemsToPurchase.length === 0) {
+        return res.status(400).json({ message: "La lista della spesa è già vuota." });
+      }
+
+      for (const item of itemsToPurchase) {
+        // Usiamo la stessa logica del 'markItemAsPurchased' ma senza il 'storeId'
+        // perché in questo flusso non lo conosciamo.
+        await storage.markItemAsPurchased(item.id!, userId);
+      }
+      
+      res.json({ success: true, message: `${itemsToPurchase.length} prodotti sono stati aggiunti alla cronologia.` });
+    } catch (error) {
+      next(error);
+    }
+  });
 
 
-
-  // --- MODIFICA CHIAVE QUI ---
   app.post("/api/lists/:listId/items", isAuthenticated, isListMember, async (req, res, next) => {
     try {
       const listId = parseInt(req.params.listId, 10);
-      // Leggiamo i dati già processati dal body della richiesta
       const { name: rawName, quantity: rawQuantity, category: rawCategory } = req.body;
 
       if (!rawName || typeof rawName !== 'string') {
@@ -283,14 +318,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       let name, quantity, category;
-
-      // Se il frontend ci ha già dato i dati strutturati (dal componente AI), li usiamo.
+      
       if (rawQuantity !== undefined && rawCategory !== undefined) {
         name = rawName;
         quantity = rawQuantity;
         category = rawCategory;
       } else {
-        // Altrimenti (dal form di aggiunta manuale), processiamo il testo per estrarre le info.
         const processed = await processItem(rawName);
         name = processed.name;
         quantity = processed.quantity;
@@ -492,22 +525,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
   
   app.post("/api/suggestions/generate", isAuthenticated, async (req, res, next) => {
     try {
-        const userId = (req.user as User).id;
-        const userLists = await storage.getListsForUser(userId);
-        if(userLists.length === 0) return res.json([]);
-        let fullHistory: PurchaseHistory[] = [];
-        for(const list of userLists) {
-            const history = await storage.getPurchaseHistoryByListId(list.id);
-            fullHistory.push(...history);
+      const userId = (req.user as User).id;
+      const userLists = await storage.getListsForUser(userId);
+      if (userLists.length === 0) return res.json([]);
+  
+      let fullHistory: PurchaseHistory[] = [];
+      for (const list of userLists) {
+        const history = await storage.getPurchaseHistoryByListId(list.id);
+        fullHistory.push(...history);
+      }
+  
+      if (fullHistory.length === 0) {
+        return res.json([]);
+      }
+  
+      // Analizziamo la cronologia per calcolare le statistiche
+      const itemStats = fullHistory.reduce((acc, item) => {
+        if (!acc[item.itemName]) {
+          acc[item.itemName] = {
+            itemName: item.itemName,
+            category: item.category || 'Sconosciuta',
+            purchaseDates: [],
+            totalPurchases: 0,
+          };
         }
-        const itemStatsForAI: any[] = [];
-        const aiSuggestions = await generateSmartSuggestions(itemStatsForAI);
-        const createdSuggestions = await Promise.all(
-            aiSuggestions.map(suggestion => storage.createSuggestion({ userId, ...suggestion, category: suggestion.category || 'Altri' }))
-        );
-        res.json(createdSuggestions);
+        acc[item.itemName].purchaseDates.push(new Date(item.datePurchased));
+        acc[item.itemName].totalPurchases++;
+        return acc;
+      }, {} as Record<string, { itemName: string; category: string; purchaseDates: Date[]; totalPurchases: number }>);
+  
+      // Calcoliamo la frequenza media e l'ultima data di acquisto
+      const itemStatsForAI = Object.values(itemStats).map(stats => {
+        stats.purchaseDates.sort((a, b) => b.getTime() - a.getTime());
+        const lastPurchaseDate = stats.purchaseDates[0];
+        let averageFrequencyDays = null;
+        if (stats.purchaseDates.length > 1) {
+          const diffs = [];
+          for (let i = 0; i < stats.purchaseDates.length - 1; i++) {
+            const diff = (stats.purchaseDates[i].getTime() - stats.purchaseDates[i+1].getTime()) / (1000 * 3600 * 24);
+            diffs.push(diff);
+          }
+          averageFrequencyDays = diffs.reduce((a, b) => a + b, 0) / diffs.length;
+        }
+        return {
+          ...stats,
+          lastPurchaseDate: lastPurchaseDate.toISOString().split('T')[0],
+          averageFrequencyDays: averageFrequencyDays ? Math.round(averageFrequencyDays) : null,
+        };
+      });
+  
+      const aiSuggestions = await generateSmartSuggestions(itemStatsForAI);
+  
+      // Filtra i suggerimenti per non riproporre cose giÃ  suggerite di recente
+      const recentSuggestions = await storage.getSuggestionsByUserId(userId);
+      const recentItemNames = new Set(recentSuggestions.map(s => s.itemName));
+      const filteredAiSuggestions = aiSuggestions.filter(s => !recentItemNames.has(s.itemName));
+  
+      const createdSuggestions = await Promise.all(
+        filteredAiSuggestions.map(suggestion =>
+          storage.createSuggestion({
+            userId,
+            itemName: suggestion.itemName,
+            confidence: suggestion.confidence,
+            reasoning: suggestion.reasoningCode, // Salva il codice della motivazione
+            category: suggestion.category || 'Altri',
+          })
+        )
+      );
+  
+      res.json(createdSuggestions);
     } catch (error) {
-        next(error);
+      next(error);
     }
   });
 
@@ -528,6 +616,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json({ success: true });
     } catch (error) {
         next(error);
+    }
+  });
+
+  app.delete("/api/suggestions", isAuthenticated, async (req, res, next) => {
+    try {
+      const userId = (req.user as User).id;
+      await storage.deleteAllSuggestions(userId);
+      res.json({ success: true });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete("/api/suggestions/:suggestionId", isAuthenticated, async (req, res, next) => {
+    try {
+      const suggestionId = parseInt(req.params.suggestionId, 10);
+      const userId = (req.user as User).id;
+      // Optional: check if the suggestion belongs to the user before deleting
+      await storage.deleteSuggestion(suggestionId, userId);
+      res.json({ success: true });
+    } catch (error) {
+      next(error);
     }
   });
 
@@ -560,7 +670,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userId = (req.user as User).id;
       const { items, platform = "carrefour", expandSearch = false } = req.body;
-      if (!Array.isArray(items)) return res.status(400).json({ message: "Items array is required" });
+      if (!Array.isArray(items)) return res.status(400).json({ message: "L'array 'items' è obbligatorio" });
+      
       let skip = 0;
       if (expandSearch) {
         const itemName = items[0];
@@ -570,7 +681,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } else {
         await storage.clearEcommerceMatches(platform, userId);
       }
+      
       const matches = await matchProductsToEcommerce(items, platform, skip);
+      
       const createdMatches = await Promise.all(
         matches.map(match => storage.createEcommerceMatch({ ...match, userId }))
       );

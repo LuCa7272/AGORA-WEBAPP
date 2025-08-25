@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Brain, Plus, Sparkles, ChefHat, Loader2, Lightbulb } from "lucide-react";
+import { Brain, Plus, Sparkles, ChefHat, Loader2, Lightbulb, Trash2, X, Repeat, Clock, Zap, HelpCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
@@ -10,6 +10,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+
 
 interface AISuggestion {
   id: string;
@@ -34,9 +36,11 @@ export default function SmartSuggestions({ activeListId }: SmartSuggestionsProps
     queryKey: ["/api/suggestions"],
   });
 
-  // --- FIX: AGGIUNTA LA MUTAZIONE MANCANTE ---
   const generateSuggestionsMutation = useMutation({
     mutationFn: async () => {
+      if (suggestions.length > 0) {
+        await deleteAllSuggestionsMutation.mutateAsync();
+      }
       const response = await apiRequest("POST", "/api/suggestions/generate");
       return response.json();
     },
@@ -46,6 +50,32 @@ export default function SmartSuggestions({ activeListId }: SmartSuggestionsProps
     },
     onError: (error: any) => {
       toast({ title: "Errore", description: error.message || "Impossibile generare suggerimenti", variant: "destructive" });
+    },
+  });
+
+  const deleteSuggestionMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest("DELETE", `/api/suggestions/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/suggestions"] });
+      toast({ title: "Suggerimento rimosso" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Errore", description: error.message || "Impossibile rimuovere il suggerimento", variant: "destructive" });
+    },
+  });
+
+  const deleteAllSuggestionsMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("DELETE", "/api/suggestions");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/suggestions"] });
+      toast({ title: "Suggerimenti cancellati", description: "Tutti i suggerimenti sono stati rimossi." });
+    },
+    onError: (error: any) => {
+      toast({ title: "Errore", description: error.message || "Impossibile cancellare i suggerimenti", variant: "destructive" });
     },
   });
 
@@ -124,145 +154,194 @@ export default function SmartSuggestions({ activeListId }: SmartSuggestionsProps
 
   const getConfidenceText = (confidence: number) => `${Math.round(confidence * 100)}% prob.`;
 
+  const getReasoningUI = (reasoningCode: string | null) => {
+    switch (reasoningCode) {
+      case 'FREQ_HIGH':
+        return { icon: <Repeat className="w-4 h-4 text-blue-500" />, text: "Acquisto Frequente" };
+      case 'TIME_TO_BUY':
+        return { icon: <Clock className="w-4 h-4 text-orange-500" />, text: "È ora di ricomprare" };
+      case 'FREQ_LOW_DUE':
+        return { icon: <Zap className="w-4 h-4 text-purple-500" />, text: "Potrebbe servire" };
+      case 'INSUFFICIENT_DATA':
+        return { icon: <HelpCircle className="w-4 h-4 text-gray-500" />, text: "Dati insufficienti" };
+      default:
+        return { icon: <HelpCircle className="w-4 h-4 text-gray-500" />, text: reasoningCode || "Motivazione non disp." };
+    }
+  };
+
   const selectedCount = aiSuggestions.filter(item => item.selected).length;
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
-              <Lightbulb className="w-6 h-6" />
-            </div>
-            <div>
-              <CardTitle className="text-xl">Assistente AI Spesa</CardTitle>
-              <CardDescription>Trasforma le tue esigenze in liste.</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Textarea
-            value={requirement}
-            onChange={(e) => setRequirement(e.target.value)}
-            placeholder="Es: Carbonara per 4, Grigliata estiva, Colazione sana..."
-            className="min-h-[100px]"
-            disabled={generateAISuggestionsMutation.isPending}
-          />
-          <Button 
-            onClick={handleGenerateList}
-            disabled={generateAISuggestionsMutation.isPending || !requirement.trim()}
-            className="w-full"
-          >
-            {generateAISuggestionsMutation.isPending ? (
-              <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Generando...</>
-            ) : (
-              <><Sparkles className="w-4 h-4 mr-2" />Genera Lista AI</>
-            )}
-          </Button>
-        </CardContent>
-      </Card>
-
-      {aiSuggestions.length > 0 && (
+    <TooltipProvider>
+      <div className="space-y-6">
         <Card>
           <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-lg flex items-center gap-2"><ChefHat className="w-5 h-5" /> Lista Generata</CardTitle>
-              <Badge variant="secondary">{selectedCount} / {aiSuggestions.length}</Badge>
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
+                <Lightbulb className="w-6 h-6" />
+              </div>
+              <div>
+                <CardTitle className="text-xl">Assistente AI Spesa</CardTitle>
+                <CardDescription>Trasforma le tue esigenze in liste.</CardDescription>
+              </div>
             </div>
           </CardHeader>
-          <CardContent className="space-y-2">
-            {aiSuggestions.map((item) => (
-              <div 
-                key={item.id} 
-                className={cn(
-                  "flex items-start gap-3 p-3 rounded-lg transition-all",
-                  item.selected ? 'bg-secondary/10' : 'hover:bg-muted'
-                )}
-              >
-                <Checkbox
-                  id={`item-${item.id}`}
-                  checked={item.selected}
-                  onCheckedChange={() => toggleItemSelection(item.id)}
-                  className="mt-1"
-                />
-                <div className="flex-1 grid gap-1">
-                  <label htmlFor={`item-${item.id}`} className="font-medium capitalize cursor-pointer">{item.name}</label>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {item.quantity && <Badge variant="outline">{item.quantity}</Badge>}
-                    <Badge variant="outline">{item.category}</Badge>
-                  </div>
-                  <p className="text-sm text-muted-foreground">{item.reason}</p>
-                </div>
-              </div>
-            ))}
-            <div className="flex gap-2 pt-4 border-t mt-4">
-              <Button
-                  onClick={() => addSelectedItemsMutation.mutate(aiSuggestions)}
-                  disabled={selectedCount === 0 || addSelectedItemsMutation.isPending}
-                  className="flex-1"
-                >
-                  {addSelectedItemsMutation.isPending ? (
-                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Aggiungendo...</>
-                  ) : (
-                    <><Plus className="w-4 h-4 mr-2" />Aggiungi {selectedCount} prodotti</>
-                  )}
-              </Button>
-              <Button variant="ghost" onClick={() => setAiSuggestions([])} disabled={addSelectedItemsMutation.isPending}>Annulla</Button>
-            </div>
+          <CardContent className="space-y-4">
+            <Textarea
+              value={requirement}
+              onChange={(e) => setRequirement(e.target.value)}
+              placeholder="Es: Carbonara per 4, Grigliata estiva, Colazione sana..."
+              className="min-h-[100px]"
+              disabled={generateAISuggestionsMutation.isPending}
+            />
+            <Button 
+              onClick={handleGenerateList}
+              disabled={generateAISuggestionsMutation.isPending || !requirement.trim()}
+              className="w-full"
+            >
+              {generateAISuggestionsMutation.isPending ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Generando...</>
+              ) : (
+                <><Sparkles className="w-4 h-4 mr-2" />Genera Lista AI</>
+              )}
+            </Button>
           </CardContent>
         </Card>
-      )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Suggerimenti dalla Cronologia</CardTitle>
-          <CardDescription>Basati sulla frequenza dei tuoi acquisti passati.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Button
-            onClick={() => generateSuggestionsMutation.mutate()}
-            disabled={generateSuggestionsMutation.isPending}
-            variant="outline"
-            className="w-full"
-          >
-            {generateSuggestionsMutation.isPending ? (
-              <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Analizzando...</>
-            ) : (
-              <><Lightbulb className="w-4 h-4 mr-2" />Genera Nuovi Suggerimenti</>
-            )}
-          </Button>
-
-          {isLoading ? (
-            <div className="space-y-2">
-              {[...Array(3)].map((_, i) => <div key={i} className="h-12 bg-muted rounded-lg animate-pulse" />)}
-            </div>
-          ) : suggestions.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-4">Nessun suggerimento disponibile. Prova a generarne di nuovi!</p>
-          ) : (
-            <div className="space-y-2">
-              {suggestions.map((suggestion) => (
-                <div key={suggestion.id} className="border rounded-lg p-3 flex items-center justify-between gap-2">
-                  <div className="flex-1">
-                    <p className="font-medium capitalize">{suggestion.itemName}</p>
-                    <p className="text-sm text-muted-foreground">{suggestion.reasoning}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge className={cn("text-xs", getConfidenceColor(suggestion.confidence))}>{getConfidenceText(suggestion.confidence)}</Badge>
-                    <Button
-                      onClick={() => acceptSuggestionMutation.mutate(suggestion.id!)}
-                      disabled={acceptSuggestionMutation.isPending}
-                      size="sm"
-                      variant="secondary"
-                    >
-                      <Plus className="w-4 h-4" />
-                    </Button>
+        {aiSuggestions.length > 0 && (
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg flex items-center gap-2"><ChefHat className="w-5 h-5" /> Lista Generata</CardTitle>
+                <Badge variant="secondary">{selectedCount} / {aiSuggestions.length}</Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {aiSuggestions.map((item) => (
+                <div 
+                  key={item.id} 
+                  className={cn(
+                    "flex items-start gap-3 p-3 rounded-lg transition-all",
+                    item.selected ? 'bg-secondary/10' : 'hover:bg-muted'
+                  )}
+                >
+                  <Checkbox
+                    id={`item-${item.id}`}
+                    checked={item.selected}
+                    onCheckedChange={() => toggleItemSelection(item.id)}
+                    className="mt-1"
+                  />
+                  <div className="flex-1 grid gap-1">
+                    <label htmlFor={`item-${item.id}`} className="font-medium capitalize cursor-pointer">{item.name}</label>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {item.quantity && <Badge variant="outline">{item.quantity}</Badge>}
+                      <Badge variant="outline">{item.category}</Badge>
+                    </div>
+                    <p className="text-sm text-muted-foreground">{item.reason}</p>
                   </div>
                 </div>
               ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+              <div className="flex gap-2 pt-4 border-t mt-4">
+                <Button
+                    onClick={() => addSelectedItemsMutation.mutate(aiSuggestions)}
+                    disabled={selectedCount === 0 || addSelectedItemsMutation.isPending}
+                    className="flex-1"
+                  >
+                    {addSelectedItemsMutation.isPending ? (
+                      <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Aggiungendo...</>
+                    ) : (
+                      <><Plus className="w-4 h-4 mr-2" />Aggiungi {selectedCount} prodotti</>
+                    )}
+                </Button>
+                <Button variant="ghost" onClick={() => setAiSuggestions([])} disabled={addSelectedItemsMutation.isPending}>Annulla</Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Suggerimenti dalla Cronologia</CardTitle>
+            <CardDescription>Basati sulla frequenza dei tuoi acquisti passati.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Button
+              onClick={() => generateSuggestionsMutation.mutate()}
+              disabled={generateSuggestionsMutation.isPending}
+              variant="outline"
+              className="w-full"
+            >
+              {generateSuggestionsMutation.isPending ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Analizzando...</>
+              ) : (
+                <><Lightbulb className="w-4 h-4 mr-2" />Genera Nuovi Suggerimenti</>
+              )}
+            </Button>
+
+            {isLoading ? (
+              <div className="space-y-2">
+                {[...Array(3)].map((_, i) => <div key={i} className="h-12 bg-muted rounded-lg animate-pulse" />)}
+              </div>
+            ) : suggestions.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">Nessun suggerimento disponibile. Prova a generarne di nuovi!</p>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex justify-end">
+                  <Button
+                    onClick={() => deleteAllSuggestionsMutation.mutate()}
+                    disabled={deleteAllSuggestionsMutation.isPending}
+                    variant="ghost"
+                    size="sm"
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Cancella Tutti
+                  </Button>
+                </div>
+                {suggestions.map((suggestion) => {
+                  const { icon, text } = getReasoningUI(suggestion.reasoning);
+                  return (
+                    <div key={suggestion.id} className="border rounded-lg p-3 flex items-center justify-between gap-2">
+                      <div className="flex-1">
+                        <p className="font-medium capitalize">{suggestion.itemName}</p>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+                              {icon}
+                              <span>{text}</span>
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>{text}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge className={cn("text-xs", getConfidenceColor(suggestion.confidence))}>{getConfidenceText(suggestion.confidence)}</Badge>
+                        <Button
+                          onClick={() => acceptSuggestionMutation.mutate(suggestion.id!)}
+                          disabled={acceptSuggestionMutation.isPending}
+                          size="sm"
+                          variant="secondary"
+                        >
+                          <Plus className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          onClick={() => deleteSuggestionMutation.mutate(suggestion.id!)}
+                          disabled={deleteSuggestionMutation.isPending}
+                          size="sm"
+                          variant="ghost"
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </TooltipProvider>
   );
 }

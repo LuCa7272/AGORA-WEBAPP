@@ -1,34 +1,16 @@
-// FILE: client/src/components/shopping-list.tsx
-
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { it } from "date-fns/locale";
-import { Trash2, ShoppingBasket, Calendar, Check, Loader2, Pencil, Save, X, CheckCircle } from "lucide-react";
+import { Trash2, ShoppingBasket, Calendar, Check, Loader2, Pencil, Save, X, CheckCircle, RotateCcw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import type { ShoppingItem } from "@shared/schema";
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { ToastAction } from "@/components/ui/toast";
 
 interface ShoppingListProps {
   isMarketMode: boolean;
@@ -40,17 +22,19 @@ interface ShoppingListProps {
 const ShoppingItemRow = ({
   item,
   isMarketMode,
-  isCompleted, // --- NUOVA PROP: per gestire lo stato visivo
+  isPendingPurchase, // Nuovo stato per indicare l'attesa
   onPurchase,
   onDelete,
   onUpdate,
+  onUndoPurchase,
 }: {
   item: ShoppingItem;
   isMarketMode: boolean;
-  isCompleted: boolean; // --- NUOVA PROP
+  isPendingPurchase: boolean;
   onPurchase: (item: ShoppingItem) => void;
-  onDelete: (itemId: number) => void;
+  onDelete: (item: ShoppingItem) => void;
   onUpdate: (data: { id: number; name?: string; quantity?: string | null }) => void;
+  onUndoPurchase: (itemId: number) => void;
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editedName, setEditedName] = useState(item.name);
@@ -71,92 +55,99 @@ const ShoppingItemRow = ({
 
   if (isMarketMode) {
     return (
-      <Card
-        onClick={() => !isCompleted && onPurchase(item)}
+      <div
+        onClick={() => !isPendingPurchase && onPurchase(item)}
         className={cn(
-          "transition-all duration-300 active:scale-95",
-          isCompleted 
-            ? "bg-slate-100 opacity-60" 
+          "flex items-center p-3 border-b transition-all duration-300",
+          isPendingPurchase 
+            ? "bg-slate-100" 
             : "cursor-pointer bg-white"
         )}
       >
-        <CardContent className="p-4 flex items-start gap-4">
-          <div className={cn(
-            "w-8 h-8 border-2 rounded-lg flex-shrink-0 flex items-center justify-center transition-all",
-            isCompleted 
-              ? "bg-green-500 border-green-500"
-              : "border-primary bg-white"
+        <div className={cn(
+          "w-6 h-6 border-2 rounded-lg flex-shrink-0 flex items-center justify-center transition-all",
+          isPendingPurchase 
+            ? "bg-green-500 border-green-500"
+            : "border-primary bg-white"
+        )}>
+          {isPendingPurchase && <Check className="w-4 h-4 text-white" />}
+        </div>
+        <div className="flex-1 min-w-0 ml-3">
+          <h3 className={cn(
+            "capitalize font-medium text-base leading-tight break-words",
+            isPendingPurchase && "line-through text-muted-foreground"
           )}>
-            {isCompleted && <Check className="w-5 h-5 text-white" />}
-          </div>
-          <div className="flex-1 min-w-0 pt-1">
-            <h3 className={cn(
-              "capitalize font-semibold text-lg leading-tight break-words",
-              isCompleted && "line-through text-muted-foreground"
-            )}>
-              {item.name}
-            </h3>
-            {item.quantity && <Badge variant="secondary" className="mt-1.5">{item.quantity}</Badge>}
-          </div>
-        </CardContent>
-      </Card>
+            {item.name}
+          </h3>
+          {item.quantity && <Badge variant="secondary" className="mt-1 text-xs">{item.quantity}</Badge>}
+        </div>
+        {isPendingPurchase && (
+          <Button variant="ghost" size="sm" onClick={() => onUndoPurchase(item.id!)} className="flex items-center gap-2 text-sm">
+            <RotateCcw className="w-4 h-4" />
+            Annulla
+          </Button>
+        )}
+      </div>
     );
   }
 
-  // --- Logica per la modalità Casa (invariata) ---
+  // Modalità Casa
   if (isEditing) {
     return (
-      <Card>
-        <CardContent className="p-3 space-y-2">
+      <div className="p-2 border rounded-lg bg-background">
+        <div className="space-y-2">
           <Input 
             value={editedName} 
             onChange={(e) => setEditedName(e.target.value)} 
             placeholder="Nome prodotto" 
-            className="h-10" 
+            className="h-9" 
             onKeyDown={(e) => e.key === 'Enter' && handleSave()}
           />
           <Input 
             value={editedQuantity} 
             onChange={(e) => setEditedQuantity(e.target.value)} 
             placeholder="Quantità (es. 1kg, 6x)" 
-            className="h-10" 
+            className="h-9" 
             onKeyDown={(e) => e.key === 'Enter' && handleSave()}
           />
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="flex justify-end gap-1 pt-1">
             <Button variant="ghost" size="sm" onClick={handleCancel}><X className="w-4 h-4 mr-1"/>Annulla</Button>
             <Button size="sm" onClick={handleSave}><Save className="w-4 h-4 mr-1"/>Salva</Button>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     );
   }
 
   return (
-    <Card className="transition-all duration-100">
-      <CardContent className="p-3 flex items-center gap-3">
+    <div className="p-2 flex items-center gap-2 border-b">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="capitalize font-semibold text-base">{item.name}</h3>
-            {item.quantity && <Badge variant="secondary">{item.quantity}</Badge>}
+            <h3 className="capitalize font-medium text-base">{item.name}</h3>
+            {item.quantity && <Badge variant="secondary" className="text-xs">{item.quantity}</Badge>}
           </div>
-          <div className="flex items-center gap-2 text-sm text-muted-foreground mt-1">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
             <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{format(new Date(item.dateAdded), "dd MMM", { locale: it })}</span>
           </div>
         </div>
-        <div className="flex items-center gap-1">
-          <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => setIsEditing(true)}><Pencil className="w-4 h-4" /></Button>
-          <Button variant="ghost" size="icon" className="h-9 w-9 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => onDelete(item.id!)}><Trash2 className="w-4 h-4" /></Button>
+        <div className="flex items-center gap-0">
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setIsEditing(true)}><Pencil className="w-4 h-4" /></Button>
+          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => onDelete(item)}><Trash2 className="w-4 h-4" /></Button>
         </div>
-      </CardContent>
-    </Card>
+    </div>
   );
 };
 
 export default function ShoppingList({ isMarketMode, activeListId, activeStoreId, categoryOrder }: ShoppingListProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [openCategories, setOpenCategories] = useState<string[]>([]);
-  const [completedItems, setCompletedItems] = useState<Record<number, boolean>>({});
+  
+  // --- MODIFICA 1: Rinominiamo e adattiamo gli stati pendenti ---
+  const [pendingPurchaseItems, setPendingPurchaseItems] = useState<number[]>([]);
+  const purchaseTimers = useRef<Record<number, NodeJS.Timeout>>({});
+  
+  const [itemsPendingDeletion, setItemsPendingDeletion] = useState<number[]>([]);
+  const deletionTimers = useRef<Record<number, NodeJS.Timeout>>({});
 
   const { data: items = [], isLoading } = useQuery<ShoppingItem[]>({
     queryKey: ["shoppingItems", activeListId],
@@ -168,11 +159,20 @@ export default function ShoppingList({ isMarketMode, activeListId, activeStoreId
     enabled: !!activeListId,
   });
 
-  const activeItems = useMemo(() => items.filter(item => !item.isCompleted), [items]);
+  const visibleItems = useMemo(
+    () => items.filter(item => !itemsPendingDeletion.includes(item.id!)),
+    [items, itemsPendingDeletion]
+  );
+  
+  // --- MODIFICA 2: La lista attiva ora filtra anche gli item in attesa di acquisto (che verranno rimossi dopo 5s) ---
+  const activeItems = useMemo(
+    () => visibleItems.filter(item => !item.isCompleted && !pendingPurchaseItems.includes(item.id!)), 
+    [visibleItems, pendingPurchaseItems]
+  );
 
   const groupedItems = useMemo(() => {
-    const group = (list: ShoppingItem[]) => Object.entries(
-      list.reduce((groups, item) => {
+    return Object.entries(
+      visibleItems.reduce((groups, item) => {
         const category = item.category || "Altro";
         if (!groups[category]) groups[category] = [];
         groups[category].push(item);
@@ -190,64 +190,48 @@ export default function ShoppingList({ isMarketMode, activeListId, activeStoreId
       if (catB === "Altro") return -1;
       return catA.localeCompare(catB);
     });
-    
-    const allGrouped = group(activeItems);
-    const activeGroups = allGrouped.map(([category, items]) => {
-      return [category, items.filter(item => !completedItems[item.id!])] as const;
-    }).filter(([, items]) => items.length > 0);
-
-    const completedGroups = allGrouped.map(([category, items]) => {
-        return [category, items.filter(item => completedItems[item.id!])] as const;
-    }).filter(([, items]) => items.length > 0);
-
-
-    return { active: activeGroups, completed: completedGroups };
-  }, [activeItems, completedItems, categoryOrder]);
-
-  useEffect(() => {
-    const allCategories = activeItems.map(i => i.category || "Altro");
-    setOpenCategories(Array.from(new Set(allCategories)));
-  }, [activeItems]);
+  }, [visibleItems, categoryOrder]);
 
   const purchaseItemMutation = useMutation({
     mutationFn: (itemToPurchase: ShoppingItem) => apiRequest("POST", `/api/items/${itemToPurchase.id!}/purchase`, { storeId: activeStoreId }),
-    // --- MODIFICA: onSuccess gestisce l'invalidazione ---
-    onSuccess: () => {
-      // Invalida le query per ricaricare i dati freschi dal server
+    onSuccess: (_, item) => {
+      // Rimuoviamo l'item dalla lista di attesa e invalidiamo la query per aggiornare la UI
+      setPendingPurchaseItems(prev => prev.filter(id => id !== item.id!));
       queryClient.invalidateQueries({ queryKey: ["shoppingItems", activeListId] });
       queryClient.invalidateQueries({ queryKey: ["history", activeListId] });
     },
     onError: (err, item) => {
       toast({ title: "Errore di Sincronizzazione", description: "Impossibile salvare l'acquisto.", variant: "destructive" });
-      // Se fallisce, annulliamo lo stato visivo di completamento
-      setCompletedItems(prev => {
-        const newState = { ...prev };
-        delete newState[item.id!];
-        return newState;
-      });
+      // Rollback: se l'acquisto fallisce, l'item riappare nella lista
+      setPendingPurchaseItems(prev => prev.filter(id => id !== item.id!));
     },
   });
 
+  // --- MODIFICA 3: Logica di acquisto aggiornata per il nuovo flusso ---
   const handlePurchase = (itemToPurchase: ShoppingItem) => {
     if (navigator.vibrate) navigator.vibrate(50);
+    const itemId = itemToPurchase.id!;
     
-    // 1. Aggiorna lo stato locale per un feedback visivo immediato
-    setCompletedItems(prev => ({ ...prev, [itemToPurchase.id!]: true }));
+    // 1. Sposta l'item nello stato di attesa (diventa grigio)
+    setPendingPurchaseItems(prev => [...prev, itemId]);
 
-    // 2. Dopo un ritardo, chiama la mutazione
-    setTimeout(() => {
+    // 2. Imposta il timer per l'acquisto definitivo
+    const timer = setTimeout(() => {
       purchaseItemMutation.mutate(itemToPurchase);
-    }, 2000); // Ritardo aumentato a 2 secondo
+      delete purchaseTimers.current[itemId];
+    }, 5000); // 5 secondi
+
+    purchaseTimers.current[itemId] = timer;
   };
-  
-  // Rileva quando una categoria attiva viene svuotata
-  useEffect(() => {
-    if (isMarketMode) {
-      const activeCategoryNames = groupedItems.active.map(([name]) => name);
-      // Chiudi solo le categorie che non hanno più item attivi
-      setOpenCategories(prevOpen => prevOpen.filter(cat => activeCategoryNames.includes(cat)));
-    }
-  }, [groupedItems.active, isMarketMode]);
+
+  const handleUndoPurchase = (itemId: number) => {
+    // 1. Cancella il timer per prevenire l'acquisto
+    clearTimeout(purchaseTimers.current[itemId]);
+    delete purchaseTimers.current[itemId];
+
+    // 2. Rimuovi l'item dallo stato di attesa, facendolo tornare normale
+    setPendingPurchaseItems(prev => prev.filter(id => id !== itemId));
+  };
 
   const updateItemMutation = useMutation({
     mutationFn: async (data: { id: number; name?: string; quantity?: string | null }) => {
@@ -264,14 +248,42 @@ export default function ShoppingList({ isMarketMode, activeListId, activeStoreId
   const deleteItemMutation = useMutation({
     mutationFn: (itemId: number) => apiRequest("DELETE", `/api/items/${itemId}`),
     onSuccess: () => {
-      toast({ title: "Prodotto rimosso" });
       queryClient.invalidateQueries({ queryKey: ["shoppingItems", activeListId] });
     },
-    onError: () => toast({ title: "Errore", description: "Impossibile cancellare il prodotto.", variant: "destructive" }),
+    onError: (error, itemId) => {
+      toast({ title: "Errore", description: "Impossibile cancellare il prodotto.", variant: "destructive" });
+      setItemsPendingDeletion(prev => prev.filter(id => id !== itemId));
+    },
   });
+
+  const handleUndoDelete = (itemId: number) => {
+    clearTimeout(deletionTimers.current[itemId]);
+    delete deletionTimers.current[itemId];
+    setItemsPendingDeletion(prev => prev.filter(id => id !== itemId));
+  };
+
+  const handleInitiateDelete = (item: ShoppingItem) => {
+    const itemId = item.id!;
+    setItemsPendingDeletion(prev => [...prev, itemId]);
+    const timer = setTimeout(() => {
+      deleteItemMutation.mutate(itemId);
+      delete deletionTimers.current[itemId];
+    }, 2500);
+    deletionTimers.current[itemId] = timer;
+    toast({
+      title: "Prodotto rimosso",
+      description: `"${item.name}" è stato rimosso dalla lista.`,
+      action: (
+        <ToastAction altText="Annulla" onClick={() => handleUndoDelete(itemId)}>
+          Annulla
+        </ToastAction>
+      ),
+    });
+  };
 
   if (isLoading) return <div className="flex justify-center items-center p-8"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
 
+  // --- MODIFICA 4: La condizione di "spesa completata" ora si basa sulla nuova `activeItems` ---
   if (activeItems.length === 0 && !isLoading) return (
     <div className="text-center py-16 px-4">
       <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mx-auto mb-6"><ShoppingBasket className="w-10 h-10 text-muted-foreground" /></div>
@@ -281,56 +293,29 @@ export default function ShoppingList({ isMarketMode, activeListId, activeStoreId
   );
 
   return (
-    <div className="space-y-4 pt-4 px-4 pb-8">
-      <Accordion type="multiple" value={openCategories} onValueChange={setOpenCategories} className="w-full space-y-4">
-        {groupedItems.active.map(([category, categoryItems]) => (
-          <AccordionItem value={category} key={`${category}-active`} className="border-none">
-            <AccordionTrigger className="text-lg font-bold capitalize hover:no-underline px-2 py-1 border-b-2 border-slate-200">
-              <div className="flex items-center gap-2">
-                {category}
-                <Badge variant="outline">{categoryItems.length}</Badge>
-              </div>
-            </AccordionTrigger>
-            <AccordionContent className="pt-3">
-              <div className="space-y-3">
-                {categoryItems.map((item) => (
-                  <ShoppingItemRow
-                    key={item.id}
-                    item={item}
-                    isMarketMode={isMarketMode}
-                    isCompleted={!!completedItems[item.id!]}
-                    onPurchase={handlePurchase}
-                    onDelete={deleteItemMutation.mutate}
-                    onUpdate={updateItemMutation.mutate}
-                  />
-                ))}
-              </div>
-            </AccordionContent>
-          </AccordionItem>
-        ))}
-        {isMarketMode && groupedItems.completed.length > 0 && (
-          <div className="pt-4">
-            <h3 className="px-2 text-lg font-bold text-muted-foreground flex items-center gap-2"><CheckCircle className="text-green-500"/>Completati</h3>
-            <div className="space-y-4 mt-2">
-               {groupedItems.completed.map(([category, categoryItems]) => (
-                <div key={`${category}-completed`} className="space-y-3">
-                  {categoryItems.map((item) => (
-                    <ShoppingItemRow
-                      key={item.id}
-                      item={item}
-                      isMarketMode={true}
-                      isCompleted={true}
-                      onPurchase={() => {}} // Non fare nulla se giÃ  completato
-                      onDelete={() => {}}
-                      onUpdate={() => {}}
-                    />
-                  ))}
-                </div>
-              ))}
-            </div>
+    <div className={cn(!isMarketMode && "space-y-2")}>
+      {/* --- MODIFICA 5: La logica di rendering è semplificata, non c'è più la sezione "Completati" --- */}
+      {groupedItems.map(([category, categoryItems]) => (
+        <div key={`${category}-active`}>
+          <h3 className="text-xs font-bold uppercase text-muted-foreground px-2 py-1.5 mt-2 bg-slate-50 border-b sticky top-0 z-10">
+            {category}
+          </h3>
+          <div className={cn(isMarketMode ? "bg-white shadow-sm" : "space-y-1 pt-1")}>
+            {categoryItems.map((item) => (
+              <ShoppingItemRow
+                key={item.id}
+                item={item}
+                isMarketMode={isMarketMode}
+                isPendingPurchase={pendingPurchaseItems.includes(item.id!)}
+                onPurchase={handlePurchase}
+                onDelete={handleInitiateDelete}
+                onUpdate={updateItemMutation.mutate}
+                onUndoPurchase={handleUndoPurchase}
+              />
+            ))}
           </div>
-        )}
-      </Accordion>
+        </div>
+      ))}
     </div>
   );
 }

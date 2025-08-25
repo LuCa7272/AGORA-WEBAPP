@@ -2,19 +2,35 @@
 
 generateFromHistory:
   description: "Analizza la cronologia acquisti per suggerire prodotti da ricomprare."
-  version: "1.1"
+  version: "1.4" # Updated version
   parameters:
     model: "gpt-4o"
-    temperature: 0.4
+    temperature: 0.1 # Even lower temperature for more deterministic output
     response_format: 
       type: "json_object"
   prompt: |
-    Sei un assistente alla spesa proattivo. Analizza i seguenti dati di cronologia acquisti di un utente e suggerisci i 3 prodotti che è più probabile debba ricomprare a breve. Considera la frequenza media di acquisto e la data dell'ultimo acquisto.
+    Sei un assistente alla spesa proattivo e molto preciso. Il tuo unico compito è analizzare i dati di cronologia acquisti di un utente e suggerire i 3 prodotti che è più probabile debba ricomprare a breve.
 
-    **Cronologia Acquisti**:
+    **REGOLA FONDAMENTALE 1: Devi suggerire ESCLUSIVAMENTE prodotti presenti nella cronologia fornita.**
+    **REGOLA FONDAMENTALE 2: Se la 'Cronologia Acquisti Fornita' è vuota o non contiene dati validi, restituisci un oggetto JSON con un array 'suggestions' vuoto, così: { "suggestions": [] }.**
+
+    **Codici di Motivazione (Reasoning Codes):**
+    Usa ESCLUSIVAMENTE uno dei seguenti codici per la chiave "reasoningCode":
+    - "FREQ_HIGH": Prodotto acquistato molto frequentemente e il tempo dall'ultimo acquisto è vicino alla media.
+    - "TIME_TO_BUY": È passato più tempo della frequenza media dall'ultimo acquisto. È ora di ricomprarlo.
+    - "FREQ_LOW_DUE": Prodotto acquistato raramente, ma in base alla cronologia potrebbe essere il momento giusto.
+    - "INSUFFICIENT_DATA": Meno di 2 acquisti, non è possibile calcolare una frequenza affidabile.
+
+    **Cronologia Acquisti Fornita**:
     {{purchaseHistory}}
 
-    Rispondi con un oggetto JSON contenente un array chiamato "suggestions". Ogni oggetto nell'array deve avere le seguenti chiavi: "itemName", "confidence" (da 0.0 a 1.0), "reasoning" (spiegazione in italiano) e "category".
+    Analizza la cronologia e per ogni suggerimento, fornisci:
+    1. "itemName": il nome esatto del prodotto dalla cronologia.
+    2. "category": la categoria del prodotto.
+    3. "confidence": una stima da 0.0 a 1.0.
+    4. "reasoningCode": uno dei codici di motivazione sopra elencati.
+
+    Rispondi con un oggetto JSON contenente un array chiamato "suggestions".
 
 generateFromRequirement:
   description: "Crea una lista della spesa partendo da un'esigenza descritta dall'utente (es. una ricetta)."

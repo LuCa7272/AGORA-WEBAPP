@@ -86,8 +86,8 @@ export default function AddItemForm({ isMarketMode, activeListId }: AddItemFormP
 
   return (
     <>
-      <div className="p-4" id="add-form">
-        <div className="bg-card shadow-sm border rounded-2xl p-2">
+      <div className="p-0" id="add-form">
+        <div className="bg-card shadow-sm border rounded-2xl p-1.5">
           <div className="flex items-center space-x-2 bg-muted rounded-full p-1">
             <div className="flex-1">
               <Input
@@ -97,7 +97,7 @@ export default function AddItemForm({ isMarketMode, activeListId }: AddItemFormP
                 value={newItem}
                 onChange={(e) => setNewItem(e.target.value)}
                 onKeyPress={handleKeyPress}
-                className="w-full bg-transparent border-none focus-visible:ring-0 focus-visible:ring-offset-0 h-12 px-4 text-base"
+                className="w-full bg-transparent border-none focus-visible:ring-0 focus-visible:ring-offset-0 h-10 px-4 text-base"
               />
             </div>
             
@@ -105,7 +105,7 @@ export default function AddItemForm({ isMarketMode, activeListId }: AddItemFormP
               variant="secondary"
               size="icon"
               onClick={() => setIsScannerOpen(true)}
-              className="w-12 h-12 rounded-full flex-shrink-0"
+              className="w-10 h-10 rounded-full flex-shrink-0"
               aria-label="Scansiona codice a barre"
             >
               <ScanLine className="w-5 h-5" />
@@ -116,7 +116,7 @@ export default function AddItemForm({ isMarketMode, activeListId }: AddItemFormP
               size="icon"
               onClick={handleAddItem}
               disabled={!newItem.trim() || addItemMutation.isPending}
-              className="w-12 h-12 rounded-full flex-shrink-0"
+              className="w-10 h-10 rounded-full flex-shrink-0"
               aria-label="Aggiungi prodotto"
             >
               <Plus className="w-5 h-5" />

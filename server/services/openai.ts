@@ -104,6 +104,41 @@ export async function generateAIShoppingList(requirement: string): Promise<any[]
 }
 
 // --- OTHER AI FUNCTIONS (invariato) ---
-export async function generateSmartSuggestions(history: any[]): Promise<any[]> { console.log('generateSmartSuggestions not fully implemented in openai.ts'); return []; }
+export async function generateSmartSuggestions(history: any[]): Promise<any[]> {
+  if (history.length === 0) {
+    return [];
+  }
+
+  const client = getOpenAIClient();
+  const { finalPrompt, parameters } = promptManager.getPrompt('generateFromHistory', {
+    purchaseHistory: JSON.stringify(history, null, 2),
+    currentDate: new Date().toISOString().split('T')[0],
+  });
+
+  try {
+    const response = await client.chat.completions.create({
+      model: parameters.model || "gpt-4o",
+      messages: [
+        { role: "system", content: "Sei un assistente che analizza la cronologia degli acquisti per suggerire prodotti da ricomprare. Rispondi solo con JSON valido." },
+        { role: "user", content: finalPrompt },
+      ],
+      response_format: { type: "json_object" },
+      temperature: parameters.temperature || 0.3,
+    });
+
+    const content = response.choices[0]?.message?.content;
+    if (!content) {
+      console.error("Nessun contenuto nella risposta di OpenAI.");
+      return [];
+    }
+
+    const parsed = JSON.parse(content);
+    return parsed.suggestions || [];
+
+  } catch (error) {
+    console.error('Errore durante la generazione dei suggerimenti intelligenti:', error);
+    return []; // Ritorna un array vuoto in caso di errore
+  }
+}
 export async function matchProductsToEcommerce(items: string[], platform: string, skip: number = 0): Promise<any[]> { console.log('matchProductsToEcommerce not fully implemented in openai.ts'); return []; }
 export async function evaluateProductMatch(userQuery: string, product: any): Promise<any> { console.log('evaluateProductMatch not fully implemented in openai.ts'); return { confidence: 50, reasoning: 'Not implemented' }; }

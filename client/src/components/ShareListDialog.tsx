@@ -1,5 +1,3 @@
-// FILE: client/src/components/ShareListDialog.tsx (NUOVO FILE)
-
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Share2, UserPlus, Loader2 } from 'lucide-react';
@@ -36,7 +34,7 @@ export function ShareListDialog({ activeListId, listName }: ShareListDialogProps
     onSuccess: (_, email) => {
       toast({ 
         title: "Invito Inviato!", 
-        description: `Un'email e' stata inviata a ${email} per unirsi alla lista.` 
+        description: `Un'email è stata inviata a ${email} per unirsi alla lista.` 
       });
       queryClient.invalidateQueries({ queryKey: ['listMembers', activeListId] });
       setInviteEmail("");
@@ -62,9 +60,8 @@ export function ShareListDialog({ activeListId, listName }: ShareListDialogProps
   return (
     <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
       <DialogTrigger asChild>
-        <Button variant="outline" size="sm" className="gap-2">
-          <Share2 className="h-4 w-4" />
-          <span>Condividi</span>
+        <Button variant="ghost" size="icon" className="rounded-full" title="Condividi lista">
+          <Share2 className="h-5 w-5" />
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-[425px]">

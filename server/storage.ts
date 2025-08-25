@@ -1,5 +1,3 @@
-// FILE: server/storage.ts
-
 import { db } from './db';
 import { 
   shoppingItems, purchaseHistory, suggestions, ecommerceMatches, users,
@@ -24,6 +22,7 @@ export interface IStorage {
   createList(userId: number, name: string): Promise<ShoppingList>;
   getListsForUser(userId: number): Promise<ShoppingList[]>;
   isUserMemberOfList(userId: number, listId: number, roles?: Array<'owner' | 'editor' | 'viewer'>): Promise<boolean>;
+  deleteList(id: number): Promise<void>;
   
   // List Members & Invitations
   addListMember(listId: number, userId: number, role: 'editor' | 'viewer'): Promise<void>;
@@ -37,7 +36,7 @@ export interface IStorage {
   updateShoppingItem(id: number, data: Partial<Omit<ShoppingItem, 'id'>>): Promise<ShoppingItem>;
   deleteShoppingItem(id: number): Promise<void>;
   clearShoppingList(listId: number): Promise<void>;
-  markItemAsPurchased(id: number, userId: number, storeId?: number): Promise<void>;
+  markItemAsPurchased(id: number, userId: number, storeId?: number | null): Promise<void>;
   
   // Purchase History
   getPurchaseHistoryByListId(listId: number): Promise<PurchaseHistory[]>;
@@ -120,6 +119,10 @@ class DrizzleStorage implements IStorage {
     return !!membership;
   }
 
+  async deleteList(id: number): Promise<void> {
+    await db.delete(shoppingLists).where(eq(shoppingLists.id, id));
+  }
+
   // === LIST MEMBERS & INVITATIONS ===
   async addListMember(listId: number, userId: number, role: 'editor' | 'viewer' = 'editor'): Promise<void> {
     const isAlreadyMember = await this.isUserMemberOfList(userId, listId);
@@ -180,7 +183,7 @@ class DrizzleStorage implements IStorage {
     await db.delete(shoppingItems).where(eq(shoppingItems.listId, listId));
   }
   
-  async markItemAsPurchased(id: number, userId: number, storeId?: number): Promise<void> {
+  async markItemAsPurchased(id: number, userId: number, storeId?: number | null): Promise<void> {
     const [item] = await db.select().from(shoppingItems).where(eq(shoppingItems.id, id)).limit(1);
     if (!item) {
       throw new Error(`Prodotto con ID ${id} non trovato.`);
@@ -229,6 +232,14 @@ class DrizzleStorage implements IStorage {
     const [updatedSuggestion] = await db.update(suggestions).set(updates).where(eq(suggestions.id, id)).returning();
     if (!updatedSuggestion) throw new Error(`Suggestion con id ${id} non trovata`);
     return updatedSuggestion;
+  }
+
+  async deleteAllSuggestions(userId: number): Promise<void> {
+    await db.delete(suggestions).where(eq(suggestions.userId, userId));
+  }
+
+  async deleteSuggestion(id: number, userId: number): Promise<void> {
+    await db.delete(suggestions).where(and(eq(suggestions.id, id), eq(suggestions.userId, userId)));
   }
 
   // === E-COMMERCE MATCHES ===

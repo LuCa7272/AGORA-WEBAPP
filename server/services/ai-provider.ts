@@ -5,7 +5,8 @@ import * as yaml from 'js-yaml';
 import {
     processItem as processItemOpenAI,
     generateAIShoppingList as generateAIShoppingListOpenAI,
-    // ... altre funzioni di OpenAI
+    generateSmartSuggestions,
+    evaluateProductMatch
 } from './openai.js';
 
 import {
@@ -15,12 +16,16 @@ import {
 
 import {
     processItem as processItemLMStudio,
-    generateAIShoppingList as generateAIShoppingListLMStudio, // <-- IMPORTIAMO LA NUOVA FUNZIONE
+    generateAIShoppingList as generateAIShoppingListLMStudio,
 } from './lm-studio.js';
+
+// --- MODIFICA CHIAVE: Importiamo la funzione di matching corretta ---
+import { enhancedProductMatching } from './advanced-matching.js';
+
 
 export type AIProvider = 'openai' | 'gemini' | 'lm-studio';
 
-// --- AI ROUTING CONFIGURATION (invariato) ---
+// --- AI ROUTING CONFIGURATION ---
 interface AIRoutingConfig {
     processItem?: AIProvider;
     generateAIShoppingList?: AIProvider;
@@ -46,9 +51,9 @@ function loadAIRoutingConfig(): AIRoutingConfig {
     }
 }
 aiRoutingConfig = loadAIRoutingConfig();
-console.log('🤖 Configurazione AI caricata:', aiRoutingConfig);
+console.log('ðŸ¤– Configurazione AI caricata:', aiRoutingConfig);
 
-// --- PROVIDER MANAGEMENT (invariato) ---
+// --- PROVIDER MANAGEMENT ---
 export function isProviderAvailable(provider: AIProvider): boolean {
     switch (provider) {
         case 'openai': return !!process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'default_key';
@@ -73,63 +78,67 @@ export async function processItem(text: string): Promise<{ name: string; quantit
 
     try {
         if (isProviderAvailable(configuredProvider)) {
-            console.log(`🧠 Tentativo di processare l'item con il provider configurato: ${configuredProvider}`);
+            console.log(`ðŸ§  Tentativo di processare l'item con il provider configurato: ${configuredProvider}`);
             switch (configuredProvider) {
                 case 'openai': return await processItemOpenAI(text);
                 case 'gemini': return await processItemGemini(text);
                 case 'lm-studio': return await processItemLMStudio(text);
             }
         }
-    } catch (error) { console.error(`❌ Errore con il provider ${configuredProvider}:`, error); }
+    } catch (error) { console.error(`â Œ Errore con il provider ${configuredProvider}:`, error); }
 
     for (const provider of fallbackProviders) {
         try {
             if (isProviderAvailable(provider)) {
-                console.warn(`⚠️ Fallback al provider: ${provider}`);
+                console.warn(`âš ï¸  Fallback al provider: ${provider}`);
                 switch (provider) {
                     case 'openai': return await processItemOpenAI(text);
                     case 'gemini': return await processItemGemini(text);
                     case 'lm-studio': return await processItemLMStudio(text);
                 }
             }
-        } catch (error) { console.error(`❌ Errore con il provider di fallback ${provider}:`, error); }
+        } catch (error) { console.error(`â Œ Errore con il provider di fallback ${provider}:`, error); }
     }
-    throw new Error("Nessun provider AI è stato in grado di processare la richiesta.");
+    throw new Error("Nessun provider AI Ã¨ stato in grado di processare la richiesta.");
 }
 
 export async function generateAIShoppingList(requirement: string): Promise<any[]> {
     const configuredProvider = aiRoutingConfig.generateAIShoppingList || aiRoutingConfig.default;
-    const fallbackProviders: AIProvider[] = ['openai', 'gemini', 'lm-studio'].filter(p => p !== configuredProvider); // <-- AGGIUNTO LM-STUDIO
+    const fallbackProviders: AIProvider[] = ['openai', 'gemini', 'lm-studio'].filter(p => p !== configuredProvider);
 
     try {
         if (isProviderAvailable(configuredProvider)) {
-            console.log(`🧠 Tentativo di generare la lista con il provider configurato: ${configuredProvider}`);
+            console.log(`ðŸ§  Tentativo di generare la lista con il provider configurato: ${configuredProvider}`);
             switch (configuredProvider) {
                 case 'openai': return await generateAIShoppingListOpenAI(requirement);
                 case 'gemini': return await generateAIShoppingListGemini(requirement);
-                case 'lm-studio': return await generateAIShoppingListLMStudio(requirement); // <-- AGGIUNTO CASO LM-STUDIO
+                case 'lm-studio': return await generateAIShoppingListLMStudio(requirement);
             }
         }
-    } catch (error) { console.error(`❌ Errore con il provider ${configuredProvider}:`, error); }
+    } catch (error) { console.error(`â Œ Errore con il provider ${configuredProvider}:`, error); }
 
     for (const provider of fallbackProviders) {
         try {
             if (isProviderAvailable(provider)) {
-                console.warn(`⚠️ Fallback al provider per la generazione lista: ${provider}`);
+                console.warn(`âš ï¸  Fallback al provider per la generazione lista: ${provider}`);
                 switch (provider) {
                     case 'openai': return await generateAIShoppingListOpenAI(requirement);
                     case 'gemini': return await generateAIShoppingListGemini(requirement);
-                    case 'lm-studio': return await generateAIShoppingListLMStudio(requirement); // <-- AGGIUNTO CASO LM-STUDIO
+                    case 'lm-studio': return await generateAIShoppingListLMStudio(requirement);
                 }
             }
-        } catch (error) { console.error(`❌ Errore con il provider di fallback ${provider}:`, error); }
+        } catch (error) { console.error(`â Œ Errore con il provider di fallback ${provider}:`, error); }
     }
-    throw new Error("Nessun provider AI è stato in grado di generare la lista.");
+    throw new Error("Nessun provider AI Ã¨ stato in grado di generare la lista.");
 }
+
+// --- MODIFICA CHIAVE: Esportiamo la funzione corretta ---
+// Attualmente, il matching avanzato ha una sola implementazione, quindi la esportiamo direttamente.
+// In futuro, se ci fossero piÃ¹ implementazioni, potremmo usare la logica di routing come per le altre funzioni.
+export const matchProductsToEcommerce = enhancedProductMatching;
 
 // Esportiamo le altre funzioni come prima
 export {
     generateSmartSuggestions,
-    matchProductsToEcommerce,
     evaluateProductMatch
-} from './openai';
+} from './openai.js';
